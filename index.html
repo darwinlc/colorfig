@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Colorfigures Gallery</title>
+<meta name="description" content="Hand-drawn isometric games and how-it-works demos: lifts, escalators, trains, vending machines and more.">
+<style>
+  :root{--paper:#f2efe7;--ink:#231e16;--muted:#857d6e;--rule:#ddd6c8;--accent:#f4b829;--game:#ef6a4c;--demo:#76a0e2}
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background-color:var(--paper);
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='320' height='320'><filter id='p'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .42  0 0 0 0 .39  0 0 0 0 .33  .16 0 0 0 0'/></filter><rect width='100%' height='100%' filter='url(%23p)'/></svg>");
+    color:var(--ink);font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;padding:40px 16px 48px}
+  .wrap{max-width:1080px;margin:0 auto}
+  header{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;border-bottom:2px solid var(--ink);padding-bottom:16px;margin-bottom:8px}
+  h1{font-size:30px;line-height:1.1;margin:0;letter-spacing:-.01em}
+  h1 .dot{display:inline-block;width:.55em;height:.55em;border:2px solid var(--ink);border-radius:50%;background:var(--accent);margin-left:6px;vertical-align:.08em}
+  header p{margin:6px 0 0;color:var(--muted);max-width:52ch}
+  .jump{display:flex;gap:8px}
+  .jump a{color:var(--ink);text-decoration:none;border:1.5px solid var(--ink);border-radius:999px;padding:5px 14px;background:var(--paper)}
+  .jump a:hover{background:var(--accent)}
+  section{margin-top:36px}
+  h2{font-size:12px;letter-spacing:.14em;text-transform:uppercase;margin:0 0 4px;display:flex;align-items:center;gap:10px}
+  h2 .n{font-weight:400;color:var(--muted)}
+  h2::before{content:"";width:14px;height:14px;border:2px solid var(--ink);border-radius:4px;background:var(--c)}
+  .sub{margin:0 0 16px;color:var(--muted)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:20px}
+  .card{display:flex;flex-direction:column;color:var(--ink);text-decoration:none;background:var(--paper);border:2px solid var(--ink);border-radius:14px;
+    box-shadow:4px 4px 0 var(--ink);overflow:hidden;transition:transform .12s,box-shadow .12s}
+  .card:hover,.card:focus-visible{transform:translate(-2px,-2px);box-shadow:6px 6px 0 var(--ink);outline:none}
+  .thumb{position:relative;aspect-ratio:4/3;overflow:hidden;border-bottom:2px solid var(--ink);background:var(--paper)}
+  .thumb iframe{position:absolute;left:0;top:0;width:800px;height:600px;border:0;transform-origin:0 0;pointer-events:none}
+  .thumb .tag{position:absolute;top:10px;left:10px;font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+    background:var(--c);border:1.5px solid var(--ink);border-radius:999px;padding:2px 8px}
+  .body{padding:12px 14px 14px;display:flex;flex-direction:column;gap:4px;flex:1}
+  .body h3{margin:0;font-size:15px}
+  .body p{margin:0;color:#4d463b;font-size:12.5px}
+  .body .play{margin-top:auto;padding-top:8px;font-weight:700;font-size:12px;letter-spacing:.06em}
+  footer{margin-top:48px;padding-top:16px;border-top:1px solid var(--rule);color:var(--muted);font-size:11.5px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  footer a{color:inherit}
+  @media (max-width:560px){body{padding:24px 16px 32px} h1{font-size:24px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Colorfigures Gallery<span class="dot"></span></h1>
+      <p>Hand-drawn isometric machines you can poke at. Some are games with a score; the rest are demos that show how the thing works.</p>
+    </div>
+    <nav class="jump"><a href="#games">Games</a><a href="#demos">Demos</a></nav>
+  </header>
+
+  <section id="games" style="--c:var(--game)">
+    <h2>Games <span class="n" id="n-games"></span></h2>
+    <p class="sub">There's a goal, and you can fail.</p>
+    <div class="grid" id="g-games"></div>
+  </section>
+
+  <section id="demos" style="--c:var(--demo)">
+    <h2>Demonstrations <span class="n" id="n-demos"></span></h2>
+    <p class="sub">Click the buttons and parts to see how it works.</p>
+    <div class="grid" id="g-demos"></div>
+  </section>
+
+  <footer>
+    <span>Drawn with the <a href="https://april-zhu.com/colorfigures" target="_blank" rel="noopener">Colorfigures</a> style by April Zhu (MIT).</span>
+    <span>Every page is a single HTML file. Open one, view source, have fun.</span>
+  </footer>
+</div>
+
+<script>
+const GAMES = [
+  { href:'games/lift-operator.html', title:'Lift Operator', text:'Drive the lift and deliver passengers before they lose patience. Watch out for the cat and the VIP.' },
+  { href:'games/terminal.html', title:'Terminal station', text:'Throw switches A and B so every train gets in and out without a crash.' },
+  { href:'games/fishing.html', title:'Fishing', text:'Cast, wait for a bite, and reel it in before it gets away.' },
+  { href:'games/marble-run.html', title:'Marble Run Adventure', text:'Drop marbles down tracks in city, jungle and space worlds.' },
+];
+const DEMOS = [
+  { href:'demos/elevator.html', title:'Elevator', text:'Call the car to any floor. The doors open and close on their own.' },
+  { href:'demos/escalator.html', title:'Escalator', text:'Send people. It slows and stops when nobody rides, and wakes when someone comes.' },
+  { href:'demos/escalator-pair.html', title:'Escalator pair', text:'One goes up, one comes down. Send people or swap the directions.' },
+  { href:'demos/station.html', title:'Train station', text:'Bring commuters in. They pick a platform and board the next train.' },
+  { href:'demos/candle.html', title:'Candle', text:'Strike a match, light the wick, then send a gust of wind.' },
+  { href:'demos/vending.html', title:'Vending machines', text:'Cans and fresh juice. Pick a mode, pay by card or coin, take your drink.' },
+  { href:'demos/sandwich-kiosk.html', title:'Sandwich kiosk', text:'Tap toppings on the kiosk screen, then confirm.' },
+];
+function cards(list, el, kind){
+  el.innerHTML = list.map(c => `
+    <a class="card" href="${c.href}">
+      <div class="thumb"><iframe data-src="${c.href}#thumb" title="${c.title} preview" tabindex="-1" aria-hidden="true" scrolling="no"></iframe>
+        <span class="tag">${kind}</span></div>
+      <div class="body"><h3>${c.title}</h3><p>${c.text}</p><span class="play">${kind === 'game' ? 'Play' : 'Open'} →</span></div>
+    </a>`).join('');
+}
+cards(GAMES, document.getElementById('g-games'), 'game');
+cards(DEMOS, document.getElementById('g-demos'), 'demo');
+document.getElementById('n-games').textContent = GAMES.length;
+document.getElementById('n-demos').textContent = DEMOS.length;
+
+// previews: each card shows the live page in thumbnail mode, scaled to fit, loaded only when it scrolls into view
+const fit = () => document.querySelectorAll('.thumb iframe').forEach(f => { f.style.transform = `scale(${f.parentElement.clientWidth / 800})`; });
+addEventListener('resize', fit); fit();
+const io = new IntersectionObserver(es => es.forEach(e => { if (!e.isIntersecting) return; const f = e.target; f.src = f.dataset.src; io.unobserve(f); }), { rootMargin:'200px' });
+document.querySelectorAll('.thumb iframe').forEach(f => io.observe(f));
+</script>
+</body>
+</html>

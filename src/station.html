@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Train station</title>
+</head>
+<body>
+<script src="core.js"></script>
+<script>
+/* ---------- geometry (x = depth, y = width, z = up); about 1 unit = 10 cm ----------
+   Two tracks run along y between two tunnel portals. Track 2 (x = 17) is behind the island platform,
+   track 1 (x = 75) in front of it. Platform 1 trains run toward +y (screen left), platform 2 trains toward -y. */
+const BD = [0, 0, 92, 190, 3, 5];
+const FAR = [0, 18], NEAR = [166, 190], PORTAL_H = 46;
+const GRASS = '#9cc47a';   // tunnel portal blocks (y ranges)
+const TRK = { 1: 75, 2: 17 };                             // track centre lines (x)
+const PLAT = [31, 61], PLAT_Y = [30, 164], PZT = 13;      // island platform x range, y range, top
+const EDGE = { 1: PLAT[1], 2: PLAT[0] };
+const CAR_L = 46, GAP = 2, NCARS = 2, TRAIN_L = NCARS*CAR_L + (NCARS - 1)*GAP;
+const STOP = 38;                                          // train's low-y end when it stands at the platform
+const DOORS = [12, 34];                                   // door centres along each car
+const doorYs = () => { const a = []; for (let c = 0; c < NCARS; c++) for (const d of DOORS) a.push(STOP + c*(CAR_L + GAP) + d); return a; };
+const WAIT_DOORS = [72, 96, 118];                         // doors people queue at (the first one is next to the stairs)
+const HOLE = [37, 47, 34, 56];                            // stairwell opening x0,x1,y0,y1
+const STAIR_BOT = [42, 36, -9], STAIR_TOP = [42, 57, PZT];
+const SIGN = { x: 46, y0: 112, y1: 148, z0: 34, z1: 50 };
+const DEST = { 1: 'CITY', 2: 'AIRPORT' };
+
+const CONC = { l:'#e3dfd5', m:'#c9c4b8', d:'#9e998e' };
+const BALLAST = matOf('#a8a093'), SLEEPER = matOf('#7a5a3c'), RAIL = { l:'#e6e9ea', m:'#aab2b4', d:'#6f777a' };
+const SHIRTS = ['#e2473a','#3e86d9','#f2c230','#38a565','#8c4bd1','#f08a2b','#d94f86','#fbf7ea'];
+const SKIN = ['#f0c8a0','#c98e62','#8a5a3c','#f3d2b4'], HAIR = ['#2a2522','#6b4a33','#c9a24a','#1c1c1c'];
+const PANTS = [matOf('#2f3a4f'), matOf('#5b5650'), matOf('#3a5a7a')];
+
+/* ---------- timetable (sim seconds; the board shows them ×10 as station time) ---------- */
+const PERIOD = 30, OFFSET = { 1: 8, 2: 23 }, APPROACH = 4, DWELL = 9, DEPART = 4, TSCALE = 10;
+const DIRN = { 1: 1, 2: -1 };
+function trainAt(k, t){
+  const n = Math.floor((t - OFFSET[k] + APPROACH) / PERIOD), ta = OFFSET[k] + n*PERIOD, rel = t - ta;
+  let y0 = null, doors = 0;
+  if (rel < 0){ const u = (rel + APPROACH) / APPROACH; y0 = STOP - DIRN[k]*170*(1 - u)*(1 - u); }
+  else if (rel < DWELL){ y0 = STOP;
+    doors = rel < .5 ? 0 : rel < 1.3 ? (rel - .5)/.8 : rel < 7.5 ? 1 : rel < 8.3 ? 1 - (rel - 7.5)/.8 : 0; }
+  else if (rel < DWELL + DEPART){ const w = (rel - DWELL) / DEPART; y0 = STOP + DIRN[k]*200*w*w; }
+  const next = rel < 0 ? ta : ta + PERIOD;
+  return { y0, doors, rel, n, here: rel >= 0 && rel < DWELL, wait: next - t };
+}
+const clockFmt = s => { s = Math.max(0, Math.round(s * TSCALE)); return Math.floor(s/60) + ':' + String(s % 60).padStart(2, '0'); };
+
+/* ---------- state ---------- */
+const FLOWS = { off:{ label:'Nobody', every:0 }, light:{ label:'A few', every:2.6 }, rush:{ label:'Rush hour', every:.7 } };
+const CHOICES = { either:'Either platform', 1:'Platform 1', 2:'Platform 2' };
+const st = { pal:'mint', t:0, people:[], seq:0, flow:'light', flowT:1.5, pending:0, pendT:0, choice:'either', served:{ 1:-1, 2:-1 }, limit:20 };
+// everyone in the station right now (coming up the stairs, waiting, boarding, getting off, going down)
+const present = () => st.people.length;
+const room = () => st.limit ? st.limit - present() : Infinity;
+
+/* ---------- trains ---------- */
+const lerp3 = (a, b, u) => a.map((v, i) => v + (b[i] - v) * u);
+// one car between ya..yb, clipped to the y range [lo, hi]
+function carSVG(k, ya, yb, lo, hi, m, doorsOpen, endCar){
+  const A = Math.max(ya, lo), B = Math.min(yb, hi);
+  if (B - A < .2) return '';
+  const c = TRK[k], x0 = c - 12, x1 = c + 12, X = x1;
+  const yr = (a, b) => [Math.max(a, A), Math.min(b, B)];
+  let s = '';
+  // bogies with wheels
+  for (const bc of [ya + 9, yb - 9]){ const [p, q] = yr(bc - 6, bc + 6); if (q - p > .2){
+    s += box(x0 + 3, p, 5.5, x1 - 3, q, 9.5, DARK, toneI, .8);
+    for (const w of [bc - 3.2, bc + 3.2]) if (w - 2.2 > A && w + 2.2 < B) s += shape(on(PX(x1 - 2.9), ellUV(w, 7.3, 2.2, 2.2, 14)), '#3d3935', .7); } }
+  s += box(x0, A, 9.5, x1, B, 37, m, tone, 1.2);
+  s += box(x0 + 2.5, A + (A > ya ? 0 : 2), 37, x1 - 2.5, B - (B < yb ? 0 : 2), 38.6, METAL, toneI, .8);   // roof
+  // stripe, windows and doors on the +x side
+  const [s0, s1] = [A, B];
+  s += fill(pd(on(PX(X + .05), rectUV(s0, 15.5, s1, 17.5))), '#fbf7ea');
+  const dys = DOORS.map(d => ya + d), wins = [[ya + 3.5, ya + 7.5], [ya + 17, ya + 29], [ya + 39, ya + 42.5]];
+  for (const [a, b] of wins){ const [p, q] = yr(a, b); if (q - p > .3) s += shape(on(PX(X + .1), rectUV(p, 21, q, 31)), '#2c3b44', .8)
+    + (q - p > 3 ? fill(pd(on(PX(X + .15), [[p + 1, 22], [p + 2.5, 22], [Math.min(q, p + 6), 30], [Math.min(q, p + 6) - 1.5, 30]])), '#ffffff', 'opacity=".25"') : ''); }
+  const open = k === 2 ? ease(doorsOpen) : 0;
+  for (const dy of dys){
+    const lo2 = dy - 4, hi2 = dy + 4, o = open * 4;
+    if (lo2 < A || hi2 > B) continue;
+    if (o > .05) s += fill(pd(on(PX(X + .05), rectUV(lo2, 10, hi2, 33))), '#2a2622');
+    for (const [a, b] of [[lo2 - o, dy - o], [dy + o, hi2 + o]]){
+      s += shape(on(PX(X + .12), rectUV(a, 10, b, 33)), mix(m.l, '#ffffff', .25), .8);
+      s += shape(on(PX(X + .16), rectUV(a + 1, 22, b - 1, 30)), '#2c3b44', .5);
+    }
+  }
+  // the end of the train (its +y face): windscreen for platform 1, tail lights for platform 2
+  if (endCar && B === yb){
+    s += shape(on(PY(yb + .1), rectUV(x0 + 3, 22, x1 - 3, 32)), '#2c3b44', .9);
+    const lc = k === 1 ? '#fff4c2' : '#e2483d';
+    for (const lx of [x0 + 4.5, x1 - 4.5]) s += shape(on(PY(yb + .15), ellUV(lx, 15, 1.4, 1.4, 12)), lc, .7);
+  }
+  return s;
+}
+function trainSVG(k, tr, lo, hi, m){
+  if (tr.y0 === null) return '';
+  const cars = [];
+  for (let c = 0; c < NCARS; c++){ const ya = tr.y0 + c*(CAR_L + GAP); cars.push({ ya, yb: ya + CAR_L, end: c === NCARS - 1 }); }
+  return cars.map(cr => carSVG(k, cr.ya, cr.yb, lo, hi, m, tr.doors, cr.end)).join('');
+}
+function trainShadow(k, tr){
+  if (tr.y0 === null) return '';
+  const c = TRK[k], A = Math.max(tr.y0, FAR[1]), B = Math.min(tr.y0 + TRAIN_L, NEAR[0]);
+  if (B - A < 1) return '';
+  const pts = []; for (const x of [c - 12, c + 12]) for (const y of [A, B]) for (const z of [5, 38]) pts.push([x, y, z]);
+  return castShadow(pts, BD[4]);
+}
+
+/* ---------- track, platform, portals ---------- */
+function trackBed(k){
+  const c = TRK[k];
+  let s = box(c - 12, FAR[1], BD[4], c + 12, NEAR[0], 4.6, BALLAST, toneI, 1);
+  const sl = [];
+  for (let y = FAR[1] + 2; y < NEAR[0] - 2; y += 8.5) sl.push(box(c - 10, y, 4.6, c + 10, y + 2.6, 5.4, SLEEPER, toneI, .6));
+  s += sl.join('');
+  for (const rx of [c - 7, c + 7]) s += box(rx - .7, FAR[1], 5.4, rx + .7, NEAR[0], 7, RAIL, toneI, .7);
+  return s;
+}
+const archUV = c => [[c - 14, BD[4]], [c + 14, BD[4]], ...arcUV(c, 30, 14, 0, 180, 12)];
+function tunnelMouths(m, trains){
+  let s = '';
+  for (const k of [2, 1]){
+    const c = TRK[k], hole = on(PY(FAR[1]), archUV(c));
+    let inner = fill(pd(hole), '#2a2622');
+    for (const rx of [c - 7, c + 7]) inner += line([[rx, FAR[1], 7], [rx, -60, 7]], .8).replace(INK, '#6f777a');
+    inner += trainSVG(k, trains[k], -999, FAR[1], m);
+    s += clipTo(hole, inner);
+  }
+  // portal block: front (+y) face with the two arches, side and top
+  const [x0, x1, z0, z1, y0, y1] = [BD[0], BD[2], BD[4], PORTAL_H, FAR[0], FAR[1]];
+  s += shape([[x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]], tone([1,0,0], CONC), 1.2);
+  s += shape([[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], GRASS, 1.2);
+  const face = on(PY(y1), rectUV(x0, z0, x1, z1));
+  s += `<path d="${pd(face)}${pd(on(PY(y1), archUV(TRK[1])))}${pd(on(PY(y1), archUV(TRK[2])))}" fill="${tone([0,1,0], CONC)}" fill-rule="evenodd"/>`;
+  for (const k of [1, 2]) s += ink(pd(on(PY(y1 + .1), arcUV(TRK[k], 30, 15.5, 0, 180, 12)), false), .9) + ink(pd(on(PY(y1), archUV(TRK[k]))), 1.6);
+  s += ink(pd(face), 1.4);
+  return s;
+}
+function platformSVG(){
+  const [x0, x1] = PLAT, [y0, y1] = PLAT_Y, Z = PZT;
+  let s = box(x0, y0, BD[4], x1, y1, Z, CONC, tone, 1.4);
+  for (const xe of [x0 + 1.8, x1 - 2.8]) s += fill(pd(on(PZ(Z + .05), rectUV(xe, y0 + 1, xe + 1, y1 - 1))), '#f2c230');   // yellow lines
+  for (const k of [1, 2]){ const xe = k === 1 ? x1 - 9 : x0 + 9;
+    s += `<text transform="${txM(P(xe, 150, Z + .1), Dv(0, -1, 0), Dv(1, 0, 0))}" font-size="7" fill="${CONC.d}" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-weight="800">${k}</text>`; }
+  // stairwell down to the underpass
+  const [hx0, hx1, hy0, hy1] = HOLE, hole = on(PZ(Z), rectUV(hx0, hy0, hx1, hy1));
+  let w = fill(pd(hole), '#4a4640');
+  w += fill(pd([[hx0, hy0, Z], [hx0, hy1, Z], [hx0, hy1, -12], [hx0, hy0, -12]]), '#8f8a80');      // wall at x0 (faces +x)
+  w += fill(pd([[hx0, hy0, Z], [hx1, hy0, Z], [hx1, hy0, -12], [hx0, hy0, -12]]), '#a9a396');      // end wall (faces +y)
+  const n = 10;
+  for (let i = 0; i < n; i++){
+    const ya = hy0 + 2 + i*(hy1 - hy0 - 2)/n, yb = ya + (hy1 - hy0 - 2)/n, z = -9 + (i + 1)*(Z + 9)/n;
+    w += shape([[hx0, ya, z], [hx1, ya, z], [hx1, yb, z], [hx0, yb, z]], '#cfc9bc', .5);
+    w += shape([[hx0, ya, z - (Z + 9)/n], [hx1, ya, z - (Z + 9)/n], [hx1, ya, z], [hx0, ya, z]], '#8f8a80', 0);
+  }
+  s += clipTo(hole, w) + ink(pd(hole), 1.3);
+  return s;
+}
+function railing(){
+  const [hx0, hx1, hy0, hy1] = HOLE, Z = PZT, h = 8;
+  let s = '';
+  for (const x of [hx0, hx1]){
+    s += rod([x, hy0, Z + h], [x, hy1, Z + h], .5, METAL, toneI, .7);
+    for (const y of [hy0, (hy0 + hy1)/2, hy1]) s += rod([x, y, Z], [x, y, Z + h], .45, METAL, toneI, .6);
+  }
+  s += rod([hx0, hy0, Z + h], [hx1, hy0, Z + h], .5, METAL, toneI, .7);
+  return s;
+}
+function signSVG(){
+  const { x, y0, y1, z0, z1 } = SIGN;
+  let s = '';
+  for (const y of [y0 + 5, y1 - 5]) s += rod([x - 1, y, PZT], [x - 1, y, z0], .8, DARK, toneI, .8);
+  s += box(x - 2, y0, z0, x, y1, z1, DARK, toneI, 1.2);
+  s += shape(on(PX(x + .05), rectUV(y0 + 1, z0 + 1, y1 - 1, z1 - 1)), '#1d2a26', .8);
+  const Xt = x + .1, mid = (y0 + y1)/2;
+  s += tx(Xt, mid, z1 - 4, 'NEXT TRAIN', 2.8, '#f2b431', 800);
+  [1, 2].forEach((k, i) => {
+    const tr = trainAt(k, st.t), z = z1 - 9.4 - i*5.2;
+    const time = tr.here ? (tr.doors > 0 ? 'NOW' : 'DUE') : clockFmt(tr.wait);
+    s += tx(Xt, y1 - 5, z, String(k), 4.2, '#8af0ae', 800) + tx(Xt, y1 - 15, z, DEST[k], 3.4, '#8af0ae', 700)
+       + tx(Xt, y0 + 7.5, z, time, 4.2, tr.here ? '#f2b431' : '#8af0ae', 800);
+  });
+  return s;
+}
+
+/* ---------- people ---------- */
+function person(o){
+  const k = .6, { x, y, z } = o, walking = o.state !== 'wait', sw = walking ? 2.4*k*Math.sin(o.phase) : 0;
+  const shirt = matOf(o.shirt), pants = o.pants, q = v => z + v*k;
+  let g = '';
+  g += rod([x - 4.3*k, y, q(25.5)], [x - 4.7*k, y - sw*.8, q(15.5)], 1.1*k, shirt, toneI, .7);
+  g += rod([x - 1.8*k, y + sw, q(.8)], [x - 1.8*k, y, q(15)], 1.7*k, pants, toneI, .8);
+  g += rod([x + 1.8*k, y - sw, q(.8)], [x + 1.8*k, y, q(15)], 1.7*k, pants, toneI, .8);
+  g += rod([x, y, q(14)], [x, y, q(26.5)], 3.7*k, shirt, toneI, 1, 3.1*k);
+  g += rod([x + 4.3*k, y, q(25.5)], [x + 4.7*k, y + sw*.8, q(15.5)], 1.1*k, shirt, toneI, .7);
+  const [X, Y] = P(x, y, q(30.6)), r = 3.3*k;
+  g += `<circle cx="${f(X)}" cy="${f(Y)}" r="${f(r)}" fill="${o.skin}" stroke="${INK}" stroke-width=".8"/>`;
+  g += `<path d="M${f(X - r)} ${f(Y - .1)}A${f(r)} ${f(r)} 0 0 1 ${f(X + r)} ${f(Y - .1)}Z" fill="${o.hair}" stroke="${INK}" stroke-width=".8"/>`;
+  return o.alpha < 1 ? `<g opacity="${f(Math.max(0, o.alpha))}">${g}</g>` : g;
+}
+// people on the stairs are cut off below the rim of the opening
+const stairClip = () => { const c = on(PZ(PZT), rectUV(HOLE[0], HOLE[2], HOLE[1], HOLE[3])).map(p => P(...p));
+  return `<clipPath id="stairClip"><path d="${sp(hull([...c, ...c.map(([a, b]) => [a, b - 400])]))}"/></clipPath>`; };
+
+const pick = a => a[Math.floor(Math.random() * a.length)];
+const newPerson = extra => ({ id: st.seq++, shirt: SHIRTS[st.seq % SHIRTS.length], skin: pick(SKIN), hair: pick(HAIR), pants: pick(PANTS), phase: Math.random()*6, alpha: 1, ...extra });
+const onPlatform = () => st.people.filter(o => o.state === 'walk' || o.state === 'wait' || o.state === 'up');
+function choosePlatform(){
+  if (st.choice !== 'either') return +st.choice;
+  const w1 = trainAt(1, st.t), w2 = trainAt(2, st.t);
+  const soon = k => { const tr = k === 1 ? w1 : w2; return tr.here && tr.rel < 6 ? 0 : tr.wait; };
+  if (Math.random() < .25) return Math.random() < .5 ? 1 : 2;
+  return soon(1) <= soon(2) ? 1 : 2;
+}
+function spotFor(k){
+  const used = st.people.filter(o => o.plat === k && (o.state === 'walk' || o.state === 'wait' || o.state === 'up'));
+  const n = used.length, door = WAIT_DOORS[n % WAIT_DOORS.length], row = Math.floor(n / WAIT_DOORS.length);
+  const depth = row % 4, side = Math.floor(row / 4);
+  const x = k === 1 ? EDGE[1] - 3.5 - depth*3.2 : EDGE[2] + 3.5 + depth*3.2;
+  return [x + (Math.random() - .5), door + (side % 2 ? 1 : -1) * (side ? 3.5*Math.ceil(side/2) : 0) + (Math.random() - .5)*2];
+}
+function spawn(){
+  if (room() <= 0 || onPlatform().length >= 60) return false;
+  const k = choosePlatform();
+  st.people.push(newPerson({ state:'up', s:0, x: STAIR_BOT[0] + (Math.random() - .5)*4, y: STAIR_BOT[1], z: STAIR_BOT[2], plat:k, spot: spotFor(k), alpha: 0 }));
+  return true;
+}
+const WALK = 11;
+function walkTo(o, tx, ty, dt){
+  const dx = tx - o.x, dy = ty - o.y, d = Math.hypot(dx, dy);
+  if (d < .3){ o.x = tx; o.y = ty; return true; }
+  const v = Math.min(d, WALK*dt); o.x += dx/d*v; o.y += dy/d*v; o.phase += dt*10; return false;
+}
+function updatePeople(dt){
+  const tr = { 1: trainAt(1, st.t), 2: trainAt(2, st.t) };
+  // passengers get off when the doors open
+  for (const k of [1, 2]) if (tr[k].doors > .9 && st.served[k] !== tr[k].n){
+    st.served[k] = tr[k].n;
+    const n = Math.min(2 + Math.floor(Math.random()*4), Math.max(0, room()));   // a full station: the rest stay on the train
+    for (let i = 0; i < n; i++){ const dy = pick(doorYs().slice(1));
+      st.people.push(newPerson({ state:'off', x: k === 1 ? EDGE[1] + 1 : EDGE[2] - 1, y: dy + (Math.random() - .5)*3, z: PZT, plat:k, alpha: 0, delay: i*.35 })); }
+  }
+  for (const o of st.people){
+    if (o.state === 'up'){
+      o.alpha = Math.min(1, o.alpha + dt*2);
+      o.s = Math.min(1, o.s + dt/2.2); const p = lerp3(STAIR_BOT, STAIR_TOP, o.s); o.y = p[1]; o.z = p[2]; o.phase += dt*10;
+      if (o.s >= 1){ o.state = 'walk'; o.z = PZT; }
+    } else if (o.state === 'walk'){
+      if (walkTo(o, o.spot[0], o.spot[1], dt)) o.state = 'wait';
+    } else if (o.state === 'wait'){
+      const t = tr[o.plat];
+      if (t.doors > .95){ o.state = 'board'; o.door = doorYs().slice(1).reduce((a, b) => Math.abs(b - o.y) < Math.abs(a - o.y) ? b : a); }
+    } else if (o.state === 'board'){
+      const ex = o.plat === 1 ? EDGE[1] + 2.5 : EDGE[2] - 2.5;
+      walkTo(o, ex, o.door, dt);
+      const d = Math.abs(ex - o.x) + Math.abs(o.door - o.y);
+      if (d < 4) o.alpha = Math.min(o.alpha, d / 4);
+      if (d < .4) o.gone = true;
+    } else if (o.state === 'off'){
+      if (o.delay > 0){ o.delay -= dt; continue; }
+      o.alpha = Math.min(1, o.alpha + dt*3);
+      if (walkTo(o, STAIR_TOP[0], STAIR_TOP[1] + 2, dt)){ o.state = 'down'; o.s = 1; }
+    } else if (o.state === 'down'){
+      o.s = Math.max(0, o.s - dt/2.2); const p = lerp3(STAIR_BOT, STAIR_TOP, o.s); o.y = p[1]; o.z = p[2]; o.phase += dt*10;
+      if (o.s <= 0) o.gone = true;
+    }
+  }
+  st.people = st.people.filter(o => !o.gone);
+}
+
+/* ---------- scene ---------- */
+function scene(st, m){
+  const top = boardTop(...BD), trains = { 1: trainAt(1, st.t), 2: trainAt(2, st.t) };
+  let s = board(...BD, matOf('#cfc8b8'));
+  let sh = castShadow([[PLAT[0], PLAT_Y[0], 3], [PLAT[1], PLAT_Y[0], 3], [PLAT[1], PLAT_Y[1], 3], [PLAT[0], PLAT_Y[1], 3],
+                       [PLAT[0], PLAT_Y[0], PZT], [PLAT[1], PLAT_Y[0], PZT], [PLAT[1], PLAT_Y[1], PZT], [PLAT[0], PLAT_Y[1], PZT]], BD[4]);
+  for (const [a, b] of [FAR, NEAR]){ const pts = []; for (const x of [BD[0], BD[2]]) for (const y of [a, b]) for (const z of [3, PORTAL_H]) pts.push([x, y, z]); sh += castShadow(pts, BD[4]); }
+  sh += trainShadow(1, trains[1]) + trainShadow(2, trains[2]);
+  s += clipTo(top, sh);
+
+  s += tunnelMouths(m, trains);
+  s += trackBed(2) + trainSVG(2, trains[2], FAR[1], NEAR[1], m);
+  s += platformSVG();
+  // people (stairs ones clipped at the rim), the sign and the railing, back to front
+  s += stairClip();
+  const parts = st.people.map(o => ({ at: [o.x, o.y, Math.max(o.z, PZT)], svg: o.z < PZT - .05 ? `<g clip-path="url(#stairClip)">${person(o)}</g>` : person(o) }));
+  parts.push({ at: [SIGN.x - 1, (SIGN.y0 + SIGN.y1)/2, PZT], svg: signSVG() });
+  parts.push({ at: [HOLE[1], (HOLE[2] + HOLE[3])/2, PZT], svg: railing() });
+  s += byDepth(parts);
+  s += trackBed(1) + trainSVG(1, trains[1], FAR[1], NEAR[1], m);
+  // near portal: the trains run into the hill here
+  s += box(BD[0], NEAR[0], BD[4], BD[2], NEAR[1], PORTAL_H, CONC, tone, 1.4);
+  s += shape(on(PZ(PORTAL_H + .05), rectUV(BD[0], NEAR[0], BD[2], NEAR[1])), GRASS, 1.2);
+  return s;
+}
+
+/* ---------- loop ---------- */
+function step(dt){
+  st.t += dt;
+  const fl = FLOWS[st.flow];
+  if (fl.every){ st.flowT += dt; if (st.flowT >= fl.every){ st.flowT = 0; spawn(); } }
+  if (st.pending > 0){ st.pendT += dt; if (st.pendT >= .3){ st.pendT = 0; if (spawn()) st.pending--; else if (room() > 0) st.pending = 0; } }   // when full, the rest wait outside
+  updatePeople(dt);
+  if (st.check){ st.maxSeen = Math.max(st.maxSeen || 0, present()); document.documentElement.dataset.max = st.maxSeen; }
+  return true;
+}
+let ui;
+ui = mountFigure({
+  fig:'10', title:'Train station', hint:'bring commuters in — they pick a platform and board the next train',
+  size:[BD[2], BD[3], 96], palette:'mint', state:st,   // taller than the scene, so it sits lower and leaves the top right clear for the stats
+  scene,
+  readout: st => clockFmt(st.t),
+  stats: st => [
+    { label:'At the station', value: st.limit ? `${present()} / ${st.limit}` : String(present()) },
+    { label:'Waiting for 1', value: String(st.people.filter(o => o.plat === 1 && (o.state === 'wait' || o.state === 'walk' || o.state === 'up')).length), small:true },
+    { label:'Waiting for 2', value: String(st.people.filter(o => o.plat === 2 && (o.state === 'wait' || o.state === 'walk' || o.state === 'up')).length), small:true },
+  ],
+  buttonsLabel:'Station',
+  buttons:[
+    { label:'Add a commuter', onClick: (st, ui) => { if (!spawn()) ui.flash(room() <= 0 ? `the station is full (${st.limit} people) — wait for a train` : 'the platform is full'); } },
+    { label:'Add 10 commuters', onClick: (st, ui) => { st.pending += 10; if (room() < 10) ui.flash(`only ${st.limit} people fit — the rest wait outside until there is room`, 2200); } },
+    { label:'Station limit', choices: st => [[20, '20 people'], [0, 'No limit']].map(([v, label]) => ({ label, current: st.limit === v,
+        onClick: (st, ui) => { st.limit = v; if (v && present() > v) ui.flash(`${present()} people here — no one else comes in until it drops below ${v}`, 2400); } })) },
+    { label:'Steady flow', choices: st => Object.entries(FLOWS).map(([k, fl]) => ({ label: fl.label, current: st.flow === k,
+        onClick: () => { st.flow = k; st.flowT = 0; } })) },
+    { label:'Commuters choose', choices: st => Object.entries(CHOICES).map(([k, label]) => ({ label, current: String(st.choice) === k,
+        onClick: () => { st.choice = k; } })) },
+  ],
+  params:(st, q) => {
+    if (q.has('t')) st.t = +q.get('t');
+    if (FLOWS[q.get('flow')]) st.flow = q.get('flow');
+    if (q.has('crowd')) st.pending = +q.get('crowd');
+    if (q.has('limit')) st.limit = +q.get('limit') || 0;
+    if (q.get('check') === '1') st.check = true;
+  },
+});
+ui.animate(step);
+</script>
+</body>
+</html>

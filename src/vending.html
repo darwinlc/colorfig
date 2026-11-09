@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vending machines: cans and fresh juice</title>
+</head>
+<body>
+<script src="core.js"></script>
+<script>
+/* ---------- geometry (x = depth, y = width, z = height) ----------
+   Two machines of the same size; the Mode picker swaps which one stands on the floor. */
+const W = 80, D = 110, H = 200, R = 8, T = 5;
+const PANEL_Y = 18;                   // centre of the control column (viewer-right)
+const CW = [38,80,104,182];           // can machine: window (y0,z0,y1,z1)
+const TRAY = [44,14,100,40];          //              pickup opening
+const JW = [38,62,104,182];           // juice machine: window
+const NICHE = [46,14,96,54];          //                cup niche
+const PRICE = { can:2, juice:3 };
+const ROWS = [
+  { code:'A', s:140, cols:['#e2473a','#2f6fd6','#f2c230','#38a565'] },
+  { code:'B', s:110, cols:['#8c4bd1','#f08a2b','#ece6d6','#33302c'] },
+  { code:'C', s:80,  cols:['#d94f86','#5cc0e8','#9ccc3c','#e2473a'] },
+];
+const COL_Y = [77,61,45,29];
+const ITEM_X = 62, ITEM_STEP = 14, SHELF_X = 72;
+
+// juicer mechanism, all in the plane x = MX behind the juice glass (DY shifts it sideways into the window)
+const DY = 31;
+const MX = 66, YC = 26+DY, CUPY = [15.5+DY, 36.5+DY], BINY = [8.5+DY, 43.5+DY], OR_R = 4.8;
+const ORANGE = { l:'#f8ad45', m:'#ea8a1c', d:'#b05a10' };
+const JUICE  = { l:'#fbb840', m:'#f39a1f', d:'#c46e10' };
+const COIN   = { l:'#f0d27a', m:'#d2ad4a', d:'#9a7a2a' };
+// timeline of one cup: the cup drops, then each orange runs drop → cut → land → squeeze → toss
+const CUP_T = .6, OR_T = 1.8, JOB_T = CUP_T + 4*OR_T;
+const PH = { drop:[0,.35], cut:[.35,.65], land:[.65,.9], squeeze:[.9,1.45], toss:[1.45,1.8] };
+const CUP_Y = 63;                     // where the juice cup stands in the niche
+
+/* ---------- small helpers ---------- */
+const clamp01 = v => Math.max(0, Math.min(1, v));
+const lerp = (a,b,t) => a + (b-a)*t;
+const money = v => '$' + v.toFixed(2);
+const zRing = (x,y,z,r,n=22) => on(PZ(z), ellUV(x,y,r,r,n));
+const rectOf = a => rectUV(a[0],a[1],a[2],a[3]);
+const OUT = rrUV(0,0,D,H,R), IN = rrUV(T,T,D-T,H-T,R-T);
+
+/* ---------- cans ---------- */
+function can(x,y,z,col){
+  const mm=matOf(col), a=zRing(x,y,z,5.6), b=zRing(x,y,z+2,6.5), c=zRing(x,y,z+17,6.5), d=zRing(x,y,z+20,5.6);
+  return loft(a,b,n=>toneI(n,METAL)) + loft(b,c,n=>toneI(n,mm)) + loft(c,d,n=>toneI(n,METAL))
+    + fill(pd(d),METAL.l) + ink(pd(d),.9) + ink(pd(zRing(x+1.5,y,z+20.1,1.6)),.7)
+    + `<path d="${pd([[x+5.5,y-2.5,z+4],[x+5.5,y-2.5,z+15]],false)}" stroke="#fff" stroke-opacity=".55" stroke-width="1.4" stroke-linecap="round"/>`
+    + hullInk([...a,...b,...c,...d],1.2);
+}
+function lyingCan(col){
+  const mm=matOf(col), x=W-9, r=6.5, z=14+r;
+  const A=on(PY(62),ellUV(x,z,r,r)), B=on(PY(82),ellUV(x,z,r,r));
+  return loft(A,B,n=>toneI(n,mm)) + fill(pd(B),toneI([0,1,0],METAL)) + ink(pd(B),1) + hullInk([...A,...B],1.2);
+}
+
+/* ---------- oranges: whole, or a half cut across one axis (1 = y, 2 = z), squashed by sq ---------- */
+function orangePart(c, r, axis=0, side=1, sq=1){
+  const pts = [], lit = [];
+  const NPH = axis ? 6 : 12;
+  for (let i=0;i<=NPH;i++){ const ph = axis ? i/NPH*Math.PI/2 : i/NPH*Math.PI;
+    for (let j=0;j<16;j++){ const th=j/16*2*Math.PI, rad=Math.sin(ph)*r, al=Math.cos(ph)*r;
+      const u=Math.cos(th)*rad, v=Math.sin(th)*rad;
+      let p, nrm;
+      if (axis === 1){ p=[c[0]+u, c[1]+al*side*sq, c[2]+v]; nrm=[u,al*side,v]; }
+      else if (axis === 2){ p=[c[0]+u, c[1]+v, c[2]+al*side*sq]; nrm=[u,v,al*side]; }
+      else { p=[c[0]+u, c[1]+v, c[2]+al]; nrm=[u,v,al]; }
+      pts.push(p); if (dot(norm(nrm), LIN) > .5) lit.push(p); } }
+  const ring = axis===1 ? on(PY(c[1]), ellUV(c[0],c[2],r,r,20)) : axis===2 ? on(PZ(c[2]), ellUV(c[0],c[1],r,r,20)) : [];
+  const all = [...pts, ...ring];
+  let s = fill(sp(hull(all.map(p=>P(...p)))), ORANGE.m);
+  if (lit.length > 2) s += fill(sp(hull(lit.map(p=>P(...p)))), ORANGE.l);
+  const n = axis===1 ? [0,-side,0] : axis===2 ? [0,0,-side] : null;
+  if (n && vis(n)){                                   // the cut face: pith ring, flesh, segments
+    const inner = axis===1 ? on(PY(c[1]), ellUV(c[0],c[2],r*.82,r*.82,20)) : on(PZ(c[2]), ellUV(c[0],c[1],r*.82,r*.82,20));
+    s += fill(pd(ring), '#fff2cf') + fill(pd(inner), '#ffcf55');
+    let seg = '';
+    for (let k=0;k<10;k++){ const a=k/10*2*Math.PI, q=[Math.cos(a)*r*.8, Math.sin(a)*r*.8];
+      seg += pd(axis===1 ? [[c[0],c[1],c[2]],[c[0]+q[0],c[1],c[2]+q[1]]] : [[c[0],c[1],c[2]],[c[0]+q[0],c[1]+q[1],c[2]]], false); }
+    s += `<path d="${seg}" fill="none" stroke="#f0a92e" stroke-width=".55"/>` + ink(pd(ring), .7);
+  }
+  if (!axis){ const q=P(...c), RR=r*1.2247;
+    s += `<circle cx="${f(q[0]+RR*.38)}" cy="${f(q[1]-RR*.42)}" r="${f(RR*.16)}" fill="#fff" opacity=".55"/>`; }
+  return s + hullInk(all, 1.1);
+}
+
+/* ---------- state ---------- */
+const st = { pal:'tomato', palOf:{ can:'tomato', juice:'mint' }, mode:'can', sel:null, credit:0, msg:'',
+  card:null, coin:null, beep:0, drop:null, job:null, ready:null,
+  oranges:24, peels:0, stock: ROWS.map(() => COL_Y.map(() => 3)) };
+
+const busy = () => !!(st.drop || st.job || st.card || st.coin);
+const price = () => st.mode === 'juice' ? PRICE.juice : st.sel ? PRICE.can : 0;
+const selCode = () => st.sel ? ROWS[st.sel.r].code + (st.sel.c+1) : '';
+
+/* ---------- juicer timeline → where everything is ---------- */
+function juiceState(){
+  const out = { cupZ:14, fill:0, n:-1, taken:0, tossed:0, flow:false, whole:null, halves:null, blade:104, heads:[117,117] };
+  if (st.ready && st.ready.kind === 'cup'){ out.fill = 1; return out; }
+  if (!st.job){ out.cupZ = null; return out; }
+  const t = st.job.t;
+  out.cupZ = t < CUP_T ? lerp(60, 14, ease(clamp01(t/CUP_T))) : 14;
+  const u = t - CUP_T; if (u < 0) return out;
+  const n = Math.min(3, Math.floor(u/OR_T)), p = u - n*OR_T;
+  out.n = n; out.taken = n + 1; out.tossed = 2*n;
+  out.fill = n/4;
+  const ph = k => clamp01((p - PH[k][0]) / (PH[k][1] - PH[k][0]));
+  if (p < PH.drop[1]){                                    // falls out of the hopper chute onto the rails
+    out.whole = [MX, YC, lerp(130, 112, Math.pow(ph('drop'),2))];
+  } else if (p < PH.cut[1]){                              // blade rises through it
+    const c = ph('cut'); out.blade = 104 + 18*Math.sin(Math.PI*Math.min(1,c*1.15)/2);
+    const g = clamp01((out.blade - 112)/8) * 1.2;
+    if (g <= 0) out.whole = [MX, YC, 112];
+    else out.halves = [{ c:[MX,YC-g,112], axis:1, side:-1, sq:1 }, { c:[MX,YC+g,112], axis:1, side:1, sq:1 }];
+  } else if (p < PH.land[1]){                             // halves tip over into the two strainer cups
+    const l = ease(ph('land')); out.blade = lerp(122, 104, l);
+    out.halves = [0,1].map(i => { const sgn = i ? 1 : -1, y = lerp(YC+sgn*1.2, CUPY[i], l);
+      return l < .5 ? { c:[MX,y,lerp(112,104,l*2)], axis:1, side:sgn, sq:1 } : { c:[MX,y,lerp(104,96,(l-.5)*2)], axis:2, side:1, sq:1 }; });
+  } else if (p < PH.squeeze[1]){                          // the domes press down, juice runs out
+    const s = ease(ph('squeeze')), hb = lerp(117, 98, Math.min(1, s*1.6)), sq = Math.min(1, (hb-96)/5);
+    out.heads = [hb, hb];
+    out.halves = [0,1].map(i => ({ c:[MX,CUPY[i],96], axis:2, side:1, sq }));
+    out.flow = s > .25; out.fill = (n + clamp01((s-.25)/.75))/4;
+  } else {                                                // cups tip, peels go to the bins
+    const d = ph('toss'); out.fill = (n+1)/4;
+    out.heads = [0,1].map(() => lerp(98,117,ease(Math.min(1,d*2))));
+    out.toss = [0,1].map(i => ({ c:[MX, lerp(CUPY[i], BINY[i], d), 96 + 7*Math.sin(Math.PI*d) - 21*d*d], axis:2, side:1, sq:.4 }));
+  }
+  return out;
+}
+
+/* ---------- juice mechanism (drawn inside the juice window clip) ---------- */
+const HOP = []; for (const z of [141,150,159]) for (const x of [60,67]) for (const y of [14,22,30,38]) HOP.push([x,y+DY,z]);
+const HY0 = 9+DY, HY1 = 43+DY;
+function hopper(count){
+  let s = '';
+  s += shape(on(PX(56), rectUV(HY0,136,HY1,170)), '#dbe9ea', .8);                          // back wall
+  s += face(pd([[56,HY0,136],[72,HY0,136],[72,HY1,136],[56,HY1,136]]), '#cbdcdf');       // floor
+  s += face(pd([[56,HY0,136],[72,HY0,136],[72,HY0,170],[56,HY0,170]]), '#d3e3e5');       // right-hand wall
+  const shown = HOP.slice(0, Math.max(0, count)).sort((a,b)=>depthOf(a)-depthOf(b));
+  for (const o of shown) s += orangePart(o, 4.3);
+  s += `<g pointer-events="none">${fill(pd(on(PX(72), rectUV(HY0,136,HY1,170))), '#cfe9f0', 'opacity=".25"')}`
+     + fill(pd(on(PX(72.1), [[HY0+5,138],[HY0+9,138],[HY0+21,168],[HY0+17,168]])), '#ffffff', 'opacity=".35"') + '</g>';
+  s += ink(pd(on(PX(72), rectUV(HY0,136,HY1,170))), 1.1) + line([[56,HY1,170],[72,HY1,170]], .9) + line([[56,HY1,170],[56,HY0,170],[72,HY0,170]], .8);
+  s += tx(72.2, YC, 165, 'ORANGES', 2.6, '#3b6a70', 800);
+  return s;
+}
+function peelBin(i, pile, flying){
+  const y0 = BINY[i]-4.5, y1 = BINY[i]+4.5, z0 = 66, z1 = 80;
+  let s = fill(pd([[58,y0,z1],[72,y0,z1],[72,y1,z1],[58,y1,z1]]), '#3a3631');
+  if (pile > 0) for (const [dx,dy] of [[-3,-1.5],[2,1.5]].slice(0, Math.min(2, pile)))
+    s += orangePart([65+dx, BINY[i]+dy, z1-1.2], 3.4, 2, 1, .4);
+  if (flying) s += orangePart(flying.c, OR_R, 2, 1, flying.sq);
+  s += shape([[72,y0,z0],[72,y1,z0],[72,y1,z1],[72,y0,z1]], METAL.l, 1);
+  s += shape([[58,y1,z0],[72,y1,z0],[72,y1,z1],[58,y1,z1]], METAL.m, 1);
+  s += tx(72.2, BINY[i], 71.5, 'PEEL', 2.3, INK, 800);
+  return s;
+}
+function juiceMech(J){
+  let s = '';
+  s += hopper(st.oranges - J.taken);
+  // housings + piston rods
+  for (const i of [0,1]) s += box(MX-5, CUPY[i]-4, 124, MX+5, CUPY[i]+4, 132, METAL, toneI, .9) + rod([MX,CUPY[i],124],[MX,CUPY[i],J.heads[i]+4], .9, METAL);
+  if (J.whole && J.whole[2] > 113) s += orangePart(J.whole, OR_R);   // still coming out of the chute
+  s += box(MX-4, YC-4, 124, MX+4, YC+4, 136, METAL, toneI, .9);       // chute under the hopper
+  // juice path: funnel + pipe
+  const fr = zRing(MX,YC,88,8), fb = zRing(MX,YC,82,2);
+  s += loft(fb, fr, n=>toneI(norm([n[0],n[1],0]),METAL)) + fill(pd(fr), '#6f7779') + ink(pd(fr), .8) + hullInk([...fr,...fb], 1);
+  if (J.flow) s += fill(pd(zRing(MX,YC,87.6,5.2)), JUICE.m);
+  s += rod([MX,YC,82],[MX,YC,40], 1.4, CLEAR, toneI, .8);
+  if (J.flow) s += `<path d="${pd([[MX+1,YC,82],[MX+1,YC,40]],false)}" stroke="${JUICE.m}" stroke-width="1.6"/>`;
+  // peel bins (and the halves being tossed into them)
+  for (const i of [0,1]) s += peelBin(i, Math.ceil((st.peels + J.tossed)/2), J.toss && J.toss[i]);
+  // the press: right column, centre (rails, blade, orange), left column
+  const column = (i, withHalf=true) => {
+    let c = rod([MX,CUPY[i],90],[MX,lerp(CUPY[i],YC,.45),86], .8, METAL);
+    c += cyl(MX, CUPY[i], 90, 96, 5.6, METAL, toneI, 1) + fill(pd(zRing(MX,CUPY[i],96,4.7)), '#5d6567');
+    if (J.flow) c += `<path d="${pd([[MX+1,CUPY[i],89],[MX+1,lerp(CUPY[i],YC,.45),86]],false)}" stroke="${JUICE.m}" stroke-width="1.3"/>`;
+    const hv = J.halves && J.halves[i];
+    if (hv && withHalf) c += orangePart(hv.c, OR_R, hv.axis, hv.side, hv.sq);
+    c += cyl(MX, CUPY[i], J.heads[i], J.heads[i]+4, 5.4, matOf('#8f9a9e'), toneI, 1);
+    return c;
+  };
+  const splitY = J.halves && J.halves[0].axis === 1;
+  s += column(0, !splitY);
+  s += box(58, YC-5.4, 105, 73, YC-3.8, 107, METAL, toneI, .8) + box(58, YC+3.8, 105, 73, YC+5.4, 107, METAL, toneI, .8);
+  const blade = shape([[60,YC,J.blade-10],[72,YC,J.blade-10],[72,YC,J.blade],[60,YC,J.blade-2]], '#e9eef0', .9);
+  if (splitY) s += orangePart(J.halves[0].c, OR_R, 1, -1, 1) + blade + orangePart(J.halves[1].c, OR_R, 1, 1, 1) + column(1, false);
+  else s += blade + (J.whole && J.whole[2] <= 113 ? orangePart(J.whole, OR_R) : '') + column(1);
+  return s;
+}
+
+/* ---------- juice cup in the niche ---------- */
+function juiceCup(x, y, z0, lvl, flow){
+  const b = zRing(x,y,z0,4.3), t = zRing(x,y,z0+15,6);
+  let s = fill(sp(hull([...b,...t].map(p=>P(...p)))), '#eef7f8', 'opacity=".75"');
+  let h = z0;
+  if (lvl > 0){ h = z0 + .8 + lvl*13; const rr = 4.3 + 1.7*(h-z0)/15 - .4;
+    s += loft(zRing(x,y,z0+.8,3.9), zRing(x,y,h,rr), n=>toneI(n,JUICE)) + fill(pd(zRing(x,y,h,rr)), JUICE.l); }
+  if (flow) s += `<path d="${pd([[x,y,z0+15],[x,y,h]],false)}" stroke="${JUICE.m}" stroke-width="1.4"/>`;
+  s += fill(pd([[x+4.4,y-3,z0+3],[x+5.6,y-3.6,z0+13],[x+5.6,y-2.4,z0+13],[x+4.4,y-1.8,z0+3]]), '#ffffff', 'opacity=".5"');
+  s += ink(pd(t), .9) + hullInk([...b,...t], 1.2);
+  if (flow) s += `<path d="${pd([[x,y,42],[x,y,z0+15]],false)}" stroke="${JUICE.m}" stroke-width="1.4"/>`;
+  return s;
+}
+
+/* ---------- control column (shared by both machines) ---------- */
+function screenLines(J){
+  if (st.msg) return st.msg.split('|');
+  if (st.drop) return ['VENDING', selCode()];
+  if (st.job) return J.n < 0 ? ['IJOOZ', 'CUP DOWN'] : ['SQUEEZING', `ORANGE ${J.n+1}/4`];
+  if (st.ready) return ['PLEASE', 'TAKE DRINK'];
+  if (st.mode === 'juice') return st.oranges < 4 ? ['IJOOZ', 'SOLD OUT'] : ['FRESH OJ $3', st.credit ? 'PAID ' + money(st.credit) : 'TAP / COIN'];
+  if (!st.sel) return ['CANS $2', 'PICK A CAN'];
+  return [selCode() + ' $2', st.credit ? 'PAID ' + money(st.credit) : 'TAP / COIN'];
+}
+function controls(m, J){
+  const F = PX(W+.3), c0 = PANEL_Y;
+  let s = '';
+  s += shape(on(F, rrUV(c0-12,185,c0+12,196,3)), '#1d2a26', 1.1) + tx(W+.4, c0, 188.6, 'PAY', 5, '#8af0ae', 800);
+  s += shape(on(F, rrUV(c0-11,148,c0+11,174,2.5)), '#1d2a26', 1.3);
+  const [l1,l2] = screenLines(J);
+  s += tx(W+.4, c0, 163.5, l1, 3.2, '#8af0ae', 700) + tx(W+.4, c0, 155, l2, 3.2, '#8af0ae', 700);
+  // price plate
+  s += shape(on(F, rrUV(c0-10,129,c0+10,142,2)), '#fff4d6', 1);
+  s += tx(W+.4, c0, 137, st.mode === 'juice' ? '1 CUP' : 'ANY CAN', 3, INK, 800) + tx(W+.4, c0, 131.4, money(price() || PRICE.can), 4, m.d, 800);
+  // contactless card reader
+  let r = shape(on(F, rrUV(c0-10,100,c0+10,123,2.5)), '#2d3236', 1.2);
+  let waves = '';
+  for (const rr of [2.4,4.4,6.4]) waves += pd(on(PX(W+.5), arcUV(c0+6,113,rr,140,220,8)), false);
+  r += `<path d="${waves}" fill="none" stroke="#e9e3d3" stroke-width="1.1" stroke-linecap="round"/>`;
+  r += tx(W+.5, c0, 103, 'TAP CARD', 2.5, '#e9e3d3', 800);
+  r += shape(on(PX(W+.5), ellUV(c0-7,119.5,1.3,1.3,12)), st.beep > 0 ? '#43c25c' : '#6b6560', .6);
+  s += act('card', r);
+  // coin slot
+  let c = shape(on(F, rrUV(c0-9,82,c0+9,97,2.5)), METAL.m, 1.2);
+  c += shape(on(PX(W+.5), rrUV(c0-.6,84.5,c0+.6,94.5,.5)), '#26231f', .6);
+  c += tx(W+.5, c0+5.5, 87.5, '$1', 3, INK, 800);
+  s += act('coin', c);
+  return s;
+}
+
+/* ---------- card and coin travelling to the machine ---------- */
+function cardArt(){
+  if (!st.card) return '';
+  const t = st.card.t, c0 = PANEL_Y;
+  const k = t < .5 ? 1 - ease(t/.5) : t < .9 ? 0 : ease((t-.9)/.5);
+  const xc = W + 2 + 40*k, dz = 22*k, dy = -10*k;
+  let s = shape(on(PX(xc), rrUV(c0-8+dy,106+dz,c0+8+dy,116+dz,1.4)), '#2f5fd0', 1.1);
+  s += fill(pd(on(PX(xc+.05), rectUV(c0-8+dy,112.5+dz,c0+8+dy,114+dz))), '#1c3c8c');
+  s += shape(on(PX(xc+.1), rrUV(c0+3+dy,108+dz,c0+6+dy,110.4+dz,.5)), '#f0d27a', .5);
+  return s;
+}
+function coinArt(){
+  if (!st.coin) return '';
+  const t = ease(clamp01(st.coin.t/.6)), xc = lerp(W+24, W-5, t), zc = lerp(104, 89.5, t), c0 = PANEL_Y;
+  const disc = yy => on(PY(yy), ellUV(xc, zc, 4.2, 4.2, 20));
+  const s = loft(disc(c0-.6), disc(c0+.6), n=>toneI(n,COIN)) + fill(pd(disc(c0+.6)), COIN.l) + ink(pd(disc(c0+.6)), .9)
+          + ink(pd(on(PY(c0+.65), ellUV(xc, zc, 2.8, 2.8, 16))), .5);
+  return clipTo(on(PY(c0), [[W+.3,70],[W+40,70],[W+40,120],[W+.3,120]]), s);   // only the part still outside the slot
+}
+
+/* ---------- shared pieces of the cabinet ---------- */
+function glass(win, m, streakA){
+  const GX = PX(W-2.9), cap = ([u,v]) => [Math.min(u,win[2]), v];
+  let s = `<g pointer-events="none">${fill(pd(on(GX,rectOf(win))),'#cfe9f0','opacity=".18"')}`
+     + fill(pd(on(GX,[[win[0]+12,win[1]],[win[0]+24,win[1]],[win[0]+58,win[3]],[win[0]+46,win[3]]].map(cap))),'#ffffff',`opacity="${streakA}"`)
+     + fill(pd(on(GX,[[win[0]+30,win[1]],[win[0]+34,win[1]],[win[0]+68,win[3]],[win[0]+64,win[3]]].map(cap))),'#ffffff',`opacity="${streakA}"`) + `</g>`;
+  s += face(pd([[W-3,win[0],win[1]],[W,win[0],win[1]],[W,win[0],win[3]],[W-3,win[0],win[3]]]), tone([0,1,0],m));
+  s += face(pd([[W-3,win[0],win[1]],[W,win[0],win[1]],[W,win[2],win[1]],[W-3,win[2],win[1]]]), tone([0,0,1],m));
+  return s;
+}
+function frontFace(m, holes){
+  const X = PX(W);
+  let s = `<path d="${pd(on(X,OUT))}${holes.map(h => pd(on(X,rectOf(h)))).join('')}" fill="${tone([1,0,0],m)}" fill-rule="evenodd"/>`;
+  s += holes.map((h,i) => ink(pd(on(X,rectOf(h))), i ? 1.6 : 1.8)).join('');
+  s += line([[W,34,8],[W,34,180]], 1);
+  return s;
+}
+function body(m, front, side){
+  let s = castShadow([...on(PX(0),OUT), ...on(PX(W),OUT)]);
+  s += front;
+  s += loft(on(PX(0),OUT), on(PX(W),OUT), n=>tone(n,m));
+  let v = ''; for (const z of [14,19,24,29]) v += pd([[16,D+.2,z],[W-16,D+.2,z]],false);
+  s += `<path d="${v}" fill="none" stroke="${INK}" stroke-width="1.6" stroke-linecap="round" opacity=".75"/>`;
+  s += side;
+  s += ink(pd(on(PX(W),OUT)),2.2) + hullInk([...on(PX(0),OUT), ...on(PX(W),OUT)], 2.8);
+  return s;
+}
+
+/* ---------- machine 1: canned drinks ---------- */
+function canMachine(m){
+  let s = '';
+  let it = fill(pd(on(PX(T),IN)), '#e8eef0');
+  it += loft(on(PX(T),IN), on(PX(W-3),IN), n => n[2]>.7 ? '#d3dbde' : '#dfe7e9', true);
+  it += fill(pd(on(PY(T+.2), rectUV(T+10,90,W-12,186))), '#ffffff', 'opacity=".8"');
+  for (let r = ROWS.length-1; r >= 0; r--){
+    const row = ROWS[r], z = row.s;
+    it += shape([[T,T,z],[SHELF_X,T,z],[SHELF_X,D-T,z],[T,D-T,z]], '#cfd6d8', 0);
+    const items = [];
+    COL_Y.forEach((y,c) => { for (let k = st.stock[r][c]-1; k >= 0; k--) items.push({ x:ITEM_X-k*ITEM_STEP, y, c }); });
+    items.sort((a,b) => depthOf([a.x,a.y,0]) - depthOf([b.x,b.y,0]));
+    for (const o of items) it += act('item', can(o.x,o.y,z,row.cols[o.c]), `data-r="${r}" data-c="${o.c}"`);
+    it += shape([[SHELF_X,T,z-3],[SHELF_X,D-T,z-3],[SHELF_X,D-T,z],[SHELF_X,T,z]], '#a9b1b4', 1);
+    COL_Y.forEach((y,c) => {
+      const isSel = st.sel && st.sel.r === r && st.sel.c === c;
+      it += shape(on(PX(SHELF_X+.2),rectUV(y-5,z-2.7,y+5,z-.3)), isSel ? '#8af0ae' : st.stock[r][c] ? '#fffdf5' : '#f3c6bd', .6);
+      it += tx(SHELF_X+.3, y, z-.9, row.code+(c+1), 2.1, INK);
+    });
+  }
+  if (st.drop){
+    const { r, c } = st.drop, t = st.drop.t, row = ROWS[r];
+    const slide = Math.min(1, t/.25) * 10, fall = t > .25 ? 240*Math.pow((t-.25)/.75, 2) : 0;
+    it += can(ITEM_X+slide, COL_Y[c], row.s-fall, row.cols[c]);
+  }
+  s += clipTo(on(PX(W), rectOf(CW)), it);
+  s += glass(CW, m, .3);
+
+  // pickup tray
+  const tb = W-18;
+  let tr = shape(on(PX(tb),rectUV(TRAY[0],14,TRAY[2],TRAY[3])), m.d, 0);
+  tr += face(pd([[tb,TRAY[0],14],[W,TRAY[0],14],[W,TRAY[0],TRAY[3]],[tb,TRAY[0],TRAY[3]]]), mix(m.d,'#000000',.25));
+  tr += face(pd([[tb,TRAY[0],14],[W,TRAY[0],14],[W,TRAY[2],14],[tb,TRAY[2],14]]), mix(m.d,'#ffffff',.12));
+  if (st.ready && st.ready.kind === 'can') tr += lyingCan(st.ready.col);
+  s += act('tray', clipTo(on(PX(W),rectOf(TRAY)), fill(pd(on(PX(W),rectOf(TRAY))),'transparent') + tr));
+
+  s += frontFace(m, [CW, TRAY]);
+  s += shape(on(PX(W+.2), rrUV(TRAY[0]-2,44,TRAY[2]+2,50,1.5)), m.d, .8) + tx(W+.3, (TRAY[0]+TRAY[2])/2, 45.6, 'PUSH', 3.4, '#fff4d6', 800);
+  s += shape(on(PX(W+.3), rrUV(38,185,104,196,3.5)), '#fff4d6', 1.3) + tx(W+.4, 71, 188, 'COLD CANS', 7, m.d, 800);
+  s += controls(m, juiceState()) + cardArt() + coinArt();
+
+  // side: a big COLD decal
+  const Y = PY(D+.2);
+  const side = shape(on(Y, rrUV(16,120,W-16,180,6)), mix(tone([0,1,0],m),'#ffffff',.12), 1.2)
+    + `<text transform="${txM(P(W/2,D+.3,143), Dv(1,0,0), Dv(0,0,-1))}" font-size="13" fill="#fff4d6" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-weight="800">COLD</text>`
+    + txY(W/2, D+.3, 130, 'DRINKS', 6, '#fff4d6', 800);
+  return body(m, s, side);
+}
+
+/* ---------- machine 2: IJOOZ fresh orange juice ---------- */
+function juiceMachine(m){
+  const J = juiceState();
+  let s = '';
+  let ji = fill(pd(on(PX(T),IN)), '#30373a');
+  ji += loft(on(PX(T),IN), on(PX(W-3),IN), n => n[2]>.7 ? '#262c2e' : '#3a4245', true);
+  ji += fill(pd(on(PY(T+.2), rectUV(T+12,70,W-14,190))), '#ffffff', 'opacity=".18"');
+  ji += juiceMech(J);
+  s += clipTo(on(PX(W), rectOf(JW)), ji);
+  s += glass(JW, m, .14);
+
+  // cup niche: spout, grille, cup
+  const nb = W-20;
+  let ni = shape(on(PX(nb),rectUV(NICHE[0],14,NICHE[2],NICHE[3])), '#3b4447', 0);
+  ni += face(pd([[nb,NICHE[0],14],[W,NICHE[0],14],[W,NICHE[0],NICHE[3]],[nb,NICHE[0],NICHE[3]]]), '#2c3335');
+  ni += face(pd([[nb,NICHE[0],14],[W,NICHE[0],14],[W,NICHE[2],14],[nb,NICHE[2],14]]), METAL.d);
+  let gr = ''; for (let y = NICHE[0]+4; y < NICHE[2]; y += 4) gr += pd([[nb+2,y,14.1],[W-1,y,14.1]], false);
+  ni += `<path d="${gr}" fill="none" stroke="${mix(METAL.d,'#000000',.35)}" stroke-width=".9"/>`;
+  ni += cyl(72, CUP_Y, 42, 60, 1.6, METAL, toneI, .9);
+  if (J.cupZ != null) ni += juiceCup(72, CUP_Y, J.cupZ, J.fill, J.flow);
+  s += act('cup', clipTo(on(PX(W),rectOf(NICHE)), fill(pd(on(PX(W),rectOf(NICHE))),'transparent') + ni));
+
+  s += frontFace(m, [JW, NICHE]);
+  s += shape(on(PX(W+.2), rrUV(NICHE[0],56,NICHE[2],60,1.2)), m.d, .8) + tx(W+.3, (NICHE[0]+NICHE[2])/2, 56.9, 'TAKE CUP HERE', 2.6, '#fff4d6', 800);
+  s += shape(on(PX(W+.3), rrUV(38,185,104,196,3.5)), '#fff4d6', 1.3) + tx(W+.4, 71, 188, 'IJOOZ', 8, '#e07b12', 800);
+  s += shape(on(PX(W+.4), ellUV(46,190.5,3.4,3.4,16)), ORANGE.m, .8) + shape(on(PX(W+.4), ellUV(96,190.5,3.4,3.4,16)), ORANGE.m, .8);
+  s += controls(m, J) + cardArt() + coinArt();
+
+  // side: a big orange slice decal
+  const Y = PY(D+.2);
+  let side = shape(on(Y, ellUV(W/2,150,20,20,32)), ORANGE.m, 1.4);
+  side += shape(on(PY(D+.3), ellUV(W/2,150,15,15,32)), '#f6c45a', .8);
+  let segs = ''; for (let k=0;k<8;k++){ const a=k/8*2*Math.PI; segs += pd([[W/2,D+.4,150],[W/2+Math.cos(a)*14,D+.4,150+Math.sin(a)*14]], false); }
+  side += `<path d="${segs}" fill="none" stroke="${ORANGE.d}" stroke-width=".8"/>`;
+  side += shape(on(PY(D+.3), [[W/2-2,170],[W/2+8,176],[W/2+4,169]]), '#38a565', .9);
+  side += txY(W/2, D+.3, 112, 'FRESH', 10, '#fff4d6', 800) + txY(W/2, D+.3, 100, '4 ORANGES', 5, '#fff4d6', 800) + txY(W/2, D+.3, 92, 'EVERY CUP', 5, '#fff4d6', 800);
+  return body(m, s, side);
+}
+
+const scene = () => { const m = PALS[st.pal]; return st.mode === 'juice' ? juiceMachine(m) : canMachine(m); };
+
+/* ---------- behaviour ---------- */
+let ui, running = false, msgTimer = 0;
+function tick(dt){
+  if (st.card){ const c = st.card; c.t += dt;
+    if (!c.paid && c.t >= .6){ c.paid = true; st.beep = 1; const due = price() - st.credit; st.credit = 0; screen('APPROVED|' + money(due), 900); start(); }
+    if (c.t >= 1.4) st.card = null; }
+  if (st.beep > 0) st.beep = Math.max(0, st.beep - dt);
+  if (st.coin){ st.coin.t += dt; if (st.coin.t >= .6){ st.coin = null; st.credit += 1; if (st.credit >= price() - 1e-9){ st.credit -= price(); start(); } } }
+  if (st.drop){ st.drop.t += dt/1.1; if (st.drop.t >= 1){ const { r, c } = st.drop; st.ready = { kind:'can', col:ROWS[r].cols[c] }; st.drop = null; } }
+  if (st.job && !st.job.frozen){ st.job.t += dt; if (st.job.t >= JOB_T){ st.job = null; st.oranges -= 4; st.peels += 8; st.ready = { kind:'cup' }; } }
+  return busy() || st.beep > 0;
+}
+function kick(){ if (running) return; running = true; ui.animate(dt => { const more = tick(dt); if (!more) running = false; return more; }); }
+function screen(text, ms=1400){ st.msg = text; clearTimeout(msgTimer); msgTimer = setTimeout(() => { st.msg = ''; ui.render(); }, ms); }
+
+function start(){
+  if (st.mode === 'can'){ const { r, c } = st.sel; st.stock[r][c]--; st.drop = { r, c, t:0 }; }
+  else st.job = { t:0 };
+  kick();
+}
+// why a payment can't start right now (or null if it can)
+function payBlock(){
+  if (st.drop || st.job) return 'wait — your drink is being made';
+  if (st.card || st.coin) return 'one moment — reading your payment';
+  if (st.ready) return 'take your drink first';
+  if (st.mode === 'can' && !st.sel) return 'pick a can first';
+  if (st.mode === 'can' && !st.stock[st.sel.r][st.sel.c]) return selCode() + ' is sold out — pick another';
+  if (st.mode === 'juice' && st.oranges < 4) return 'out of oranges';
+  return null;
+}
+function tapCard(ui){ const why = payBlock(); if (why){ ui.flash(why); return; } st.card = { t:0 }; kick(); }
+function insertCoin(ui){ const why = payBlock(); if (why){ ui.flash(why); return; } st.coin = { t:0 }; kick(); }
+const modeBlock = () => busy() ? 'wait — your drink is being made' : st.ready ? 'take your drink first' : null;
+function setMode(k, ui){
+  if (st.mode === k) return;
+  const why = modeBlock(); if (why) return ui.flash(why);
+  if (st.credit > 0){ ui.flash(`${money(st.credit)} in coins given back`); st.credit = 0; }
+  st.palOf[st.mode] = st.pal; st.mode = k; st.pal = st.palOf[k]; st.sel = null;
+  document.querySelectorAll('#pals .sw').forEach(b => b.setAttribute('aria-pressed', b.title === st.pal));
+  syncButtons();
+}
+// the juice machine has only one drink, so "Pick a can" is hidden there
+function syncButtons(){
+  document.querySelectorAll('#btns .stepwrap').forEach(w => {
+    if (w.textContent.trim().toLowerCase().startsWith('pick a can')) w.style.display = st.mode === 'juice' ? 'none' : ''; });
+}
+function pickCan(r, c, ui){
+  if (st.mode !== 'can'){ const why = modeBlock(); if (why) return ui.flash(why); setMode('can', ui); }
+  if (busy()) return ui.flash('wait — your drink is being made');
+  if (st.ready) return ui.flash('take your drink first');
+  if (!st.stock[r][c]) return ui.flash(ROWS[r].code + (c+1) + ' is sold out');
+  st.sel = { r, c };
+}
+function takeDrink(ui){
+  if (!st.ready) return ui.flash(st.drop || st.job ? 'still making it — one moment' : 'nothing to take yet — pay first');
+  const k = st.ready.kind; st.ready = null; st.sel = null;
+  screen('ENJOY|' + (k === 'cup' ? 'YOUR JUICE' : 'YOUR CAN'), 1500);
+  ui.flash(k === 'cup' ? 'Fresh orange juice — enjoy!' : 'Cold can — enjoy!');
+}
+
+ui = mountFigure({
+  fig:'07', title:'Vending machines: cans and fresh juice', hint:'pick a mode, pay by card or coin, take your drink',
+  idea:'Two machines: one drops a cold can off its shelf, the other cuts and presses four fresh oranges into a cup.',
+  size:[W,D,H], palette:'tomato', state:st,
+  scene,
+  readout: st => st.job ? 'Squeezing oranges…' : st.ready ? 'Take your drink' : 'Pick a mode',
+  stats: st => [ { label:'Price', value: price() ? money(price()) : '—' }, { label:'Paid', value: money(st.credit), small:true },
+                 st.mode === 'juice' && { label:'Oranges left', value: String(st.oranges - juiceState().taken), small:true } ],
+  buttonsLabel:'Vending',
+  buttons:[
+    { label:'Mode', choices: st => [
+        { label:'Canned drinks', current: st.mode === 'can', disabled: !!modeBlock(), why: modeBlock(), onClick: (st,ui) => setMode('can', ui) },
+        { label:'IJOOZ fresh orange juice', current: st.mode === 'juice', disabled: !!modeBlock(), why: modeBlock(), onClick: (st,ui) => setMode('juice', ui) } ] },
+    { label:'Pick a can', choices: st => ROWS.flatMap((row,r) => COL_Y.map((_,c) => ({
+        label:`${row.code}${c+1}`, current: st.mode === 'can' && st.sel && st.sel.r === r && st.sel.c === c,
+        disabled: !st.stock[r][c] || busy() || !!st.ready,
+        why: !st.stock[r][c] ? `${row.code}${c+1} is sold out` : st.ready ? 'take your drink first' : 'wait — your drink is being made',
+        onClick: (st,ui) => pickCan(r, c, ui) }))) },
+    { label:'Tap credit card', onClick: (st,ui) => tapCard(ui) },
+    { label:'Insert $1 coin', onClick: (st,ui) => insertCoin(ui) },
+    { label:'Take drink', onClick: (st,ui) => takeDrink(ui) },
+  ],
+  acts:{
+    item: (st,el,ui) => pickCan(+el.dataset.r, +el.dataset.c, ui),
+    card: (st,el,ui) => tapCard(ui),
+    coin: (st,el,ui) => insertCoin(ui),
+    tray: (st,el,ui) => { if (st.ready && st.ready.kind === 'can') takeDrink(ui); },
+    cup:  (st,el,ui) => { if (st.ready && st.ready.kind === 'cup') takeDrink(ui); },
+  },
+  params:(st,q) => {
+    if (q.get('mode') === 'juice'){ st.mode = 'juice'; st.pal = st.palOf.juice; }
+    const sq = /^([A-C])([1-4])$/.exec(q.get('sel') || '');
+    if (sq) st.sel = { r:'ABC'.indexOf(sq[1]), c:+sq[2]-1 };
+    if (q.has('credit')) st.credit = +q.get('credit');
+    if (q.has('jt')){ st.mode = 'juice'; st.pal = st.palOf.juice; st.job = { t:+q.get('jt'), frozen:true }; }
+    if (q.get('ready') === 'cup'){ st.mode = 'juice'; st.pal = st.palOf.juice; st.ready = { kind:'cup' }; }
+    if (q.get('ready') === 'can') st.ready = { kind:'can', col:'#e2473a' };
+    if (q.has('peels')) st.peels = +q.get('peels');
+  },
+});
+syncButtons();
+</script>
+</body>
+</html>

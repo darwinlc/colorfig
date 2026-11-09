@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Elevator</title>
+</head>
+<body>
+<script src="core.js"></script>
+<script>
+/* ---------- geometry (x = depth, y = width, z = up) ---------- */
+const W = 56, D = 72, FH = 40, NF = 5, HB = 214;        // depth, width, floor height, floors, roof height
+const FLOORS = ['B1','1','2','3','4'];                   // index 0 = basement
+const OPEN_Y = [16, 67];                                 // glass openings on the front, y range
+const openZ = f => [f*FH + 3, f*FH + FH - 3];
+const openUV = f => rectUV(OPEN_Y[0], openZ(f)[0], OPEN_Y[1], openZ(f)[1]);
+const STRIP = [0, 16];                                   // solid strip on the right of the front: call panels
+const LD = [28, 44];                                     // landing / car door opening, y range
+const DOOR_H = 26, SLIDE = 8;
+// car (a box riding inside the shaft, just behind the glass)
+const CX0 = 14, CX1 = 54.5, CY0 = 16, CY1 = 56, CH = 30;
+const carZ = pos => 3 + pos*FH;
+const OUT = rrUV(0, 0, D, HB, 2);
+
+const CONC = { l:'#d9d5cb', m:'#bdb8ad', d:'#8f8a80' };
+const SHAFT = { m:'#7d786f', d:'#5f5a53' };
+const CARM = { l:'#76a0e2', m:'#5a82c6', d:'#1c2948' };
+const DOORM = { l:'#eef0f0', m:'#c6ccce', d:'#8f989b' };
+const CW = matOf('#5b5650');
+const GREEN = '#43c25c', AMBER = '#f2b431';
+
+/* ---------- state ---------- */
+const st = { pal:'mustard', pos:1, v:0, dir:0, target:null, req:[0,0,0,0,0], door:0, phase:'idle', t:0, loop:false };
+const ACC = 1.3, VMAX = 1.1, DOOR_T = .9, DWELL = 1.8;
+const atFloor = () => st.phase !== 'moving' && Math.abs(st.pos - Math.round(st.pos)) < 1e-6;
+const nearest = () => Math.max(0, Math.min(NF-1, Math.round(st.pos)));
+
+/* ---------- shaft interior (seen through the glass) ---------- */
+function shaft(){
+  let s = '';
+  s += fill(pd(on(PX(3), rectUV(3, 0, D-3, HB-6))), SHAFT.d);                                  // back wall
+  s += fill(pd([[3,3,0],[W,3,0],[W,3,HB-6],[3,3,HB-6]]), SHAFT.m);                             // right side wall (faces +y)
+  for (let f = 1; f < NF; f++) s += line([[3,3.1,f*FH],[W,3.1,f*FH]], .6);                    // slab joints
+  s += fill(pd(on(PZ(.1), rectUV(3, 3, W, D-3))), SHAFT.d);                                     // pit floor
+  s += box(28, 3, 0, 31, 7, HB-6, matOf('#8f989b'), toneI, .8);                                           // guide rail
+  return s;
+}
+function counterweight(cz){
+  const z = 166 - cz;
+  let s = box(40, 4, z, 50, 13, z + 26, CW, toneI, 1);
+  for (let k = 1; k < 5; k++) s += line([[50.05, 4, z + k*5.2],[50.05, 13, z + k*5.2]], .6);
+  s += line([[45, 8.5, z + 26],[45, 8.5, HB - 6]], 1.1);                                       // its rope
+  return s;
+}
+function car(cz, d){
+  let s = '';
+  s += line([[34, 36, cz + CH],[34, 36, HB - 6]], 1.3);                                         // hoist rope
+  s += shape([[CX0,CY1,cz],[CX1,CY1,cz],[CX1,CY1,cz+CH],[CX0,CY1,cz+CH]], tone([0,1,0], CARM), .9);
+  s += shape(on(PZ(cz+CH), rectUV(CX0, CY0, CX1, CY1)), tone([0,0,1], CARM), .9);
+  s += line([[34, 32, cz+CH],[34, 40, cz+CH]], 1.4);                                            // rope hitch
+  // inside the cab, through the door opening
+  const hole = on(PX(CX1), rectUV(LD[0], cz + .5, LD[1], cz + DOOR_H));
+  if (d > .01){
+    let it = shape(on(PX(CX0+1), rectUV(CY0+1, cz+.5, CY1-1, cz+CH-1)), WOOD.l, .6);
+    it += shape(on(PX(CX0+1.2), rectUV(CY0+7, cz+CH-4.5, CY1-7, cz+CH-2.5)), '#fff8dc', .5);  // ceiling light strip
+    it += shape([[CX0+1,CY0+1,cz+.5],[CX1,CY0+1,cz+.5],[CX1,CY0+1,cz+CH-1],[CX0+1,CY0+1,cz+CH-1]], WOOD.m, .6);
+    it += shape([[CX1-14,CY0+1.1,cz+11],[CX1-6,CY0+1.1,cz+11],[CX1-6,CY0+1.1,cz+21],[CX1-14,CY0+1.1,cz+21]], '#3d3935', .6);  // cab panel
+    for (let k = 0; k < 5; k++) it += fill(pd(on(PY(CY0+1.2), ellUV(CX1-10, cz+12.6+k*1.8, .6, .6, 8))), st.req[k] ? AMBER : '#c9cfd0');
+    it += line([[CX0+4,CY0+1.4,cz+9],[CX1-16,CY0+1.4,cz+9]], 1.3);                             // handrail
+    it += shape(on(PZ(cz+.5), rectUV(CX0+1, CY0+1, CX1, CY1-1)), '#8b7f72', .6);               // floor
+    s += clipTo(hole, it);
+  }
+  // doors slide apart behind the front panels
+  const dx = CX1 - .4, mid = (LD[0] + LD[1]) / 2, o = ease(d) * SLIDE;
+  s += shape(on(PX(dx), rectUV(LD[0] - o, cz + .5, mid - o, cz + DOOR_H)), DOORM.l, .9);
+  s += shape(on(PX(dx), rectUV(mid + o, cz + .5, LD[1] + o, cz + DOOR_H)), DOORM.l, .9);
+  const outer = on(PX(CX1), rectUV(CY0, cz, CY1, cz + CH));
+  s += `<path d="${pd(outer)}${pd(hole)}" fill="${tone([1,0,0], CARM)}" fill-rule="evenodd"/>`;
+  s += ink(pd(hole), 1) + ink(pd(outer), 1.1);
+  s += shape(on(PX(CX1+.1), rectUV(mid - 4, cz + DOOR_H + 1.2, mid + 4, cz + DOOR_H + 3.6)), '#1d2a26', .6);
+  s += tx(CX1 + .2, mid, cz + DOOR_H + 1.8, FLOORS[nearest()], 2, '#8af0ae', 800);
+  s += hullInk([...outer, ...on(PX(CX0), rectUV(CY0, cz, CY1, cz + CH))], 1.6);
+  return s;
+}
+
+/* ---------- front: glass, landing doors, call panels ---------- */
+function landingDoors(f, d){
+  const [z0] = openZ(f), z1 = z0 + DOOR_H, mid = (LD[0] + LD[1]) / 2, o = ease(d) * SLIDE, X = PX(W + .15);
+  let s = '';
+  for (const [a, b] of [[LD[0] - o, mid - o], [mid + o, LD[1] + o]]){
+    s += fill(pd(on(X, rectUV(a, z0, b, z1))), '#cfe9f0', 'opacity=".38"');
+    s += ink(pd(on(X, rectUV(a, z0, b, z1))), 1.1);
+  }
+  s += shape(on(PX(W + .2), rectUV(LD[0] - SLIDE - 1, z1, LD[1] + SLIDE + 1, z1 + 1.6)), METAL.m, .9);   // door track
+  return s;
+}
+function glassTint(f){
+  const [z0, z1] = openZ(f), X = PX(W - .5);
+  let s = '';
+  for (const r of [[OPEN_Y[0], z0, LD[0], z1], [LD[1], z0, OPEN_Y[1], z1], [LD[0], z0 + DOOR_H, LD[1], z1]])
+    s += fill(pd(on(X, rectUV(...r))), '#cfe9f0', 'opacity=".22"');
+  s += fill(pd(on(X, [[50, z0], [54, z0], [62, z1], [58, z1]])), '#ffffff', 'opacity=".36"');
+  return `<g pointer-events="none">${s}</g>`;
+}
+function callPanel(f){
+  const zf = f*FH, X = PX(W + .2), cy = (STRIP[0] + STRIP[1]) / 2, here = atFloor() && nearest() === f;
+  let s = shape(on(X, rrUV(3, zf + 7, 13, zf + 33, 2)), '#fff4d6', 1.1);
+  s += tx(W + .3, cy, zf + 24, FLOORS[f], f ? 7.5 : 6.4, INK, 800);
+  s += fill(pd(on(PX(W + .3), ellUV(cy, zf + 30.4, 1, 1, 10))), here ? GREEN : '#c9c4b4');          // arrival lamp
+  let b = shape(on(PX(W + .3), ellUV(cy, zf + 14, 3.4, 3.4, 20)), METAL.m, 1);
+  b += shape(on(PX(W + .5), ellUV(cy, zf + 14, 2.4, 2.4, 20)), st.req[f] ? AMBER : METAL.l, .9);
+  return s + act('call', b, `data-f="${f}"`);
+}
+function display(){
+  const X = PX(W + .2);
+  let s = shape(on(X, rrUV(24, 200, 48, 211, 2)), '#1d2a26', 1.3);
+  const arrow = st.phase === 'moving' ? (st.dir > 0 ? 'UP ' : 'DN ') : '';
+  s += tx(W + .3, 36, 203.4, arrow + FLOORS[nearest()], 5.2, '#8af0ae', 800);
+  return s;
+}
+
+/* ---------- roof machine: motor and the sheave that winds the ropes ---------- */
+function machine(){
+  let s = box(16, 20, HB, 36, 44, HB + 9, DARK, toneI, 1.1);
+  for (let k = 0; k < 4; k++) s += line([[36.05, 23 + k*5, HB + 2],[36.05, 23 + k*5, HB + 7]], .7);
+  const wy = 26, wz = HB + 9, r = 7.5;
+  s += line([[39, wy - r, wz],[39, wy - r, HB]], 1.3) + line([[39, wy + r, wz],[39, wy + r, HB]], 1.3);
+  s += cylX(36, 42, wy, wz, r, METAL, toneI, 1.2, 28);
+  const a0 = st.pos * 2.4;
+  let sp = '';
+  for (let k = 0; k < 5; k++){ const a = a0 + k * 2*Math.PI/5; sp += pd([[42.1, wy, wz],[42.1, wy + (r-1.4)*Math.cos(a), wz + (r-1.4)*Math.sin(a)]], false); }
+  s += `<path d="${sp}" fill="none" stroke="${METAL.d}" stroke-width="1.2" stroke-linecap="round"/>`;
+  s += shape(on(PX(42.15), ellUV(wy, wz, 1.6, 1.6, 12)), METAL.d, .8);
+  return s;
+}
+
+/* ---------- scene ---------- */
+function scene(st, m){
+  const cz = carZ(st.pos), X = PX(W);
+  let s = castShadow([...on(PX(0), OUT), ...on(PX(W), OUT), [16,20,HB+16],[36,44,HB+16]]);
+
+  // everything inside the shaft, seen through the glass openings
+  const holes = Array.from({ length: NF }, (_, f) => pd(on(X, openUV(f))) ).join('');
+  s += `<clipPath id="shaftClip"><path d="${holes}"/></clipPath>`;
+  s += `<g clip-path="url(#shaftClip)">${shaft()}${counterweight(cz)}${car(cz, st.door)}</g>`;
+  for (let f = 0; f < NF; f++) s += glassTint(f);
+
+  // front face with its openings; the basement part is concrete, below the ground line
+  s += `<path d="${pd(on(X, OUT))}${holes}" fill="${tone([1,0,0], m)}" fill-rule="evenodd"/>`;
+  s += `<path d="${pd(on(PX(W + .05), rectUV(.4, .4, D - .4, FH)))}${pd(on(PX(W + .05), openUV(0)))}" fill="${CONC.l}" fill-rule="evenodd"/>`;
+  for (let f = 0; f < NF; f++) s += ink(pd(on(X, openUV(f))), 1.7);
+  s += ink(pd(on(PX(W + .1), rectUV(STRIP[1], 1, STRIP[1], HB - 1))), .8);
+
+  // landing doors, sills, call panels
+  const here = atFloor() ? nearest() : -1;
+  for (let f = 0; f < NF; f++){
+    s += landingDoors(f, f === here ? st.door : 0);
+    s += box(W, LD[0] - 2, f*FH + 1.6, W + 2.5, LD[1] + 2, f*FH + 3, METAL, toneI, .9);
+    s += callPanel(f);
+  }
+  s += display();
+
+  // outer body, left side
+  s += extrude(OUT, 0, W, m);
+  const sideC = tone([0,1,0], m), Y = PY(D + .2);
+  s += shape(on(Y, rectUV(.4, .4, W - .4, FH)), tone([0,1,0], CONC), 0);
+  for (let f = 2; f < NF; f++) s += line([[1, D + .2, f*FH],[W - 1, D + .2, f*FH]], .8);
+  s += txY(W/2, D + .3, 202, 'LIFT', 9, sideC === m.l ? m.m : m.d, 800);
+  // ground line (the basement is below it)
+  s += `<path d="${pd([[W + .1, 0, FH],[W + .1, D, FH],[0, D + .2, FH]], false)}" fill="none" stroke="#4f9a45" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>`;
+  s += tx(W + .3, 60, FH - 7, 'BASEMENT', 3, CONC.d, 800);
+
+  s += ink(pd(on(X, OUT)), 2.2);
+  s += hullInk([...on(PX(0), OUT), ...on(PX(W), OUT)], 2.8);
+  s += machine();
+  return s;
+}
+
+/* ---------- behaviour: a simple collective controller ---------- */
+let ui;
+function nextAhead(){
+  const p = st.pos, dir = st.dir; let best = null;
+  st.req.forEach((r, i) => { if (!r || (i - p) * dir <= 1e-6) return;
+    if (best === null || Math.abs(i - p) < Math.abs(best - p)) best = i; });
+  return best;
+}
+function step(dt){
+  switch (st.phase){
+    case 'idle': {
+      const up = st.req.some((r, i) => r && i > st.pos), dn = st.req.some((r, i) => r && i < st.pos);
+      if (!up && !dn){ st.dir = 0; st.loop = false; return false; }
+      st.dir = st.dir >= 0 ? (up ? 1 : -1) : (dn ? -1 : 1);
+      st.phase = 'moving'; st.v = 0; st.target = nextAhead(); break;
+    }
+    case 'moving': {
+      // a newly called floor on the way is taken if the car can still stop there
+      const t = nextAhead();
+      if (t !== null && Math.abs(t - st.pos) < Math.abs(st.target - st.pos) && Math.abs(t - st.pos) >= st.v*st.v/(2*ACC)) st.target = t;
+      const dist = Math.abs(st.target - st.pos);
+      st.v = Math.min(VMAX, st.v + ACC*dt, Math.sqrt(2*ACC*dist));
+      st.pos += st.dir * Math.max(.07, st.v) * dt;
+      if ((st.target - st.pos) * st.dir <= 0){ st.pos = st.target; st.v = 0; st.req[st.target] = 0; st.phase = 'opening'; }
+      break;
+    }
+    case 'opening':
+      st.door = Math.min(1, st.door + dt/DOOR_T);
+      if (st.door >= 1){ st.phase = 'dwell'; st.t = DWELL; }
+      break;
+    case 'dwell':
+      st.t -= dt; if (st.t <= 0) st.phase = 'closing';
+      break;
+    case 'closing':
+      st.door = Math.max(0, st.door - dt/DOOR_T);
+      if (st.door <= 0) st.phase = 'idle';
+      break;
+  }
+  return true;
+}
+function run(){ if (st.loop) return; st.loop = true; ui.animate(step); }
+function call(f){
+  if (atFloor() && nearest() === f){
+    if (st.phase === 'dwell'){ st.t = DWELL; ui.flash(`Doors held open at ${FLOORS[f]}`); }
+    else if (st.phase === 'closing'){ st.phase = 'opening'; ui.flash(`Reopening at ${FLOORS[f]}`); }
+    else if (st.phase === 'idle') st.phase = 'opening';
+    return run();
+  }
+  if (st.req[f]) return ui.flash(`Floor ${FLOORS[f]} is already called`);
+  st.req[f] = 1; run();
+}
+
+ui = mountFigure({
+  fig:'07', title:'Elevator', hint:'call the car to any floor — the doors open and close on their own',
+  size:[W + 2.5, D, HB + 17], palette:'mustard', state:st,
+  scene,
+  readout: st => st.phase === 'moving' ? `going ${st.dir > 0 ? 'up' : 'down'}` : `at ${FLOORS[nearest()]}`,
+  stats: st => [
+    { label:'Floor', value: FLOORS[nearest()] },
+    { label:'Doors', value: { idle:'closed', moving:'closed', opening:'opening', dwell:'open', closing:'closing' }[st.phase], small:true },
+  ],
+  buttonsLabel:'Call the lift',
+  buttons: FLOORS.map((label, f) => ({ label, onClick: () => call(f) })).reverse(),   // top floor first, like a lift panel
+  acts:{ call: (st, el) => call(+el.dataset.f) },
+  params:(st, q) => {
+    const fi = FLOORS.indexOf(q.get('floor') || ''); if (fi >= 0) st.pos = fi;
+    if (q.has('pos')){ st.pos = +q.get('pos'); st.phase = 'moving'; st.dir = 1; }
+    if (q.get('open') === '1'){ st.door = 1; st.phase = 'dwell'; st.t = DWELL; }
+  },
+});
+</script>
+</body>
+</html>

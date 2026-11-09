@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Candle</title>
+</head>
+<body>
+<script src="core.js"></script>
+<script>
+/* ---------- geometry (x = depth, y = width, z = up) ---------- */
+const BD = [0, 0, 98, 100, 3, 6];                       // board x0,y0,x1,y1,h,r
+const CC = [38, 62], CR = 9, DISH_R = 16, DISH_Z = 6.5, CAND_H = 60, WICK = 4.5;
+const BOX = [54, 10, 82, 36, 3, 11];                    // matchbox sleeve x0,y0,x1,y1,z0,z1
+const TRAY_OUT = 10;                                    // how far the drawer is pulled out
+const MATCH_L = 24;
+const SPOTS = [[74, 46], [82, 52], [70, 56]];           // where spent matches land (head positions)
+const STICK = matOf('#e8c98e'), HEAD = '#d33a2c', BURNT = '#2a2522';
+const SLEEVE = matOf('#3e86d9'), TRAYM = matOf('#efe3c4'), STRIKER = '#6b4a33';
+
+/* ---------- state ---------- */
+const st = { pal:'tomato', lit:false, flame:0, burn:0, match:null, queue:[], wind:null, smoke:[], spent:[], clock:0, loop:false };
+const topZ = () => DISH_Z + CAND_H - st.burn;
+const wickTip = () => [CC[0] + .4, CC[1], topZ() + WICK];
+
+/* ---------- small helpers ---------- */
+const lerp3 = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
+const addS = (a, d, k) => a.map((v, i) => v + d[i] * k);
+// a flame in screen space, rising from (X, Y): h tall, w half-width, bx = lean at the tip
+function flameSVG(X, Y, h, w, bx){
+  const c = (a, b) => `${f(a)} ${f(b)}`;
+  const drop = (hh, ww, y0, lean) => `M${c(X, y0)}C${c(X - ww, y0 - hh*.12)} ${c(X - ww*.75 + lean*.3, Y - hh*.55)} ${c(X + lean, Y - hh)}`
+    + `C${c(X + ww*.75 + lean*.3, Y - hh*.55)} ${c(X + ww, y0 - hh*.12)} ${c(X, y0)}Z`;
+  const outer = drop(h, w, Y + 1.4, bx), inner = drop(h*.58, w*.5, Y + .6, bx*.6);
+  return fill(outer, '#f6a623') + ink(outer, .8) + fill(inner, '#ffe27a')
+    + `<ellipse cx="${f(X)}" cy="${f(Y + .2)}" rx="${f(w*.42)}" ry="${f(w*.32)}" fill="#5a8fe0" opacity=".75"/>`;
+}
+
+/* ---------- the candle in its dish ---------- */
+function candle(m){
+  const z1 = topZ();
+  let s = cyl(CC[0], CC[1], BD[4], DISH_Z, DISH_R, CERAMIC, toneI, 1.6, 36);
+  s += ink(pd(on(PZ(DISH_Z + .05), ellUV(CC[0], CC[1], DISH_R - 2.2, DISH_R - 2.2, 36))), .7);
+  s += cyl(CC[0], CC[1], DISH_Z, z1, CR, m, tone, 2.2, 36);
+  // melted pool on top while it burns, and a drip running down the front
+  if (st.burn > .05){
+    const k = Math.min(1, st.burn / 1.2);
+    s += fill(pd(on(PZ(z1 + .05), ellUV(CC[0], CC[1], 6.6*k, 6.6*k, 28))), mix(m.l, '#ffffff', .35), `opacity="${f(.85*Math.max(st.flame, .4))}"`);
+    const L = Math.min(14, st.burn * 3), a = Math.PI/4, rr = CR + .25, pt = (da, z) => [CC[0] + rr*Math.cos(a + da), CC[1] + rr*Math.sin(a + da), z];
+    if (L > 1) s += shape([pt(-.16, z1), pt(.16, z1), pt(.12, z1 - L), pt(0, z1 - L - 1.4), pt(-.12, z1 - L)], mix(m.l, '#ffffff', .18), .7);
+  }
+  // wick: black and slightly bent, glowing at the tip while lit or just blown out
+  const w = wickTip();
+  s += rod([CC[0], CC[1], z1], w, .5, DARK, toneI, .8);
+  const ember = st.lit ? 1 : Math.max(0, 1 - (st.clock - (st.outAt || -9)) / 1.4);
+  if (ember > 0) s += `<circle cx="${f(P(...w)[0])}" cy="${f(P(...w)[1])}" r="${f(.9)}" fill="#ff7a2a" opacity="${f(ember)}"/>`;
+  return s;
+}
+
+/* ---------- the matchbox: a sleeve with its drawer pulled out, matches inside ---------- */
+function matchbox(){
+  const [x0, y0, x1, y1, z0, z1] = BOX;
+  let s = box(x0, y0, z0, x1, y1, z1, SLEEVE, tone, 1.4);
+  s += shape(on(PZ(z1 + .05), rrUV(x0 + 4, y0 + 4, x1 - 4, y1 - 4, 2)), '#fbf7ea', .9);           // label
+  s += shape(on(PZ(z1 + .1), ellUV((x0 + x1)/2, (y0 + y1)/2, 4, 4, 18)), HEAD, .7);
+  s += shape(on(PY(y1 + .15), rectUV(x0 + 3, z0 + 1.6, x1 - 3, z1 - 1.6)), STRIKER, .8);           // striker strip
+  // the drawer sticking out of the front
+  const tx0 = x1, tx1 = x1 + TRAY_OUT, ty0 = y0 + 1, ty1 = y1 - 1, tz0 = z0 + .4, tz1 = z1 - .4;
+  s += box(tx0, ty0, tz0, tx1, ty1, tz1, TRAYM, toneI, 1.1);
+  const inside = on(PZ(tz1), rectUV(tx0 - .1, ty0 + 1, tx1 - 1, ty1 - 1));
+  let ins = fill(pd(inside), TRAYM.d);
+  for (let k = 0; k < 7; k++){
+    const y = ty0 + 3 + k*3, z = tz1 - 1.6;
+    ins += rod([tx0 - 4, y, z], [tx1 - 3.6, y, z], .8, STICK, toneI, .6);
+    ins += `<circle cx="${f(P(tx1 - 2.6, y, z)[0])}" cy="${f(P(tx1 - 2.6, y, z)[1])}" r="1.7" fill="${HEAD}" stroke="${INK}" stroke-width=".6"/>`;
+  }
+  s += clipTo(inside, ins);
+  return s;
+}
+
+/* ---------- a match: head at H, stick toward dir ---------- */
+function matchSVG(H, dir, burnt){
+  const tail = addS(H, dir, MATCH_L), base = addS(H, dir, 1.4);
+  let s = rod(base, tail, .75, burnt ? matOf('#8a6a48') : STICK, toneI, .8);
+  if (burnt) s += rod(base, addS(H, dir, 6), .78, matOf('#3a3330'), toneI, .7);
+  const [X, Y] = P(...H);
+  s += `<ellipse cx="${f(X)}" cy="${f(Y)}" rx="2.1" ry="1.8" fill="${burnt ? BURNT : HEAD}" stroke="${INK}" stroke-width=".8"/>`;
+  if (!burnt) s += `<circle cx="${f(X - .6)}" cy="${f(Y - .6)}" r=".6" fill="#ffffff" opacity=".6"/>`;
+  return s;
+}
+
+/* ---------- smoke wisps and wind ---------- */
+function smokeSVG(){
+  let s = '';
+  for (const p of st.smoke){
+    const [X, Y] = P(...p.at), t = p.t, op = Math.max(0, 1 - t/3) * .8;
+    for (const ph of [0, 2.1]){
+      const pts = [];
+      for (let i = 0; i <= 14; i++){ const u = i/14, h = u * 34 * Math.min(1, .35 + t*.9);
+        pts.push([X + Math.sin(u*7 + t*3 + ph) * 2.4 * u + (p.drift || 0) * u * 12, Y - h]); }
+      s += `<path d="M${pts.map(q => f(q[0]) + ' ' + f(q[1])).join('L')}" fill="none" stroke="#9a948a" stroke-width="${ph ? 1.1 : 1.7}" stroke-linecap="round" opacity="${f(op)}"/>`;
+    }
+  }
+  return s;
+}
+const WIND_T = 1.5;
+const windW = () => st.wind ? Math.sin(Math.PI * Math.min(1, st.wind.t / WIND_T)) * (st.wind.strong ? 1 : .45) : 0;
+function windSVG(){
+  if (!st.wind) return '';
+  const t = st.wind.t, wd = [-Math.SQRT1_2, Math.SQRT1_2, 0], zc = topZ() + 6;
+  let s = '';
+  const lines = st.wind.strong ? [[0, 0], [-6, 8], [5, -7], [-2, 15]] : [[0, 2], [-5, -6]];
+  lines.forEach(([dz, lag], j) => {
+    const head = -60 + 125 * (t / WIND_T) + lag, pts = [];
+    for (let u = head - 22; u <= head; u += 2)
+      pts.push([CC[0] - wd[0]*u + 6*(j%2 ? 1 : -1)*Math.SQRT1_2, CC[1] - wd[1]*u + 6*(j%2 ? 1 : -1)*Math.SQRT1_2, zc + dz + 1.6*Math.sin(u*.3 + j)]);
+    // a little curl at the leading end
+    const e = pts[pts.length - 1];
+    for (let a = 0; a <= 5; a++){ const an = a/5 * Math.PI * 1.4; pts.push([e[0] + Math.SQRT1_2*2.4*Math.sin(an), e[1] - Math.SQRT1_2*2.4*Math.sin(an), e[2] + 2.4 - 2.4*Math.cos(an)]); }
+    const op = Math.min(1, t*3, (WIND_T - t)*3);
+    s += `<path d="${pd(pts, false)}" fill="none" stroke="#6f9fc4" stroke-width="${st.wind.strong ? 2 : 1.5}" stroke-linecap="round" stroke-linejoin="round" opacity="${f(Math.max(0, op))}"/>`;
+  });
+  return s;
+}
+
+/* ---------- scene ---------- */
+function scene(st, m){
+  const top = boardTop(...BD);
+  let s = board(...BD, WOOD);
+  // warm pool of light on the board
+  if (st.flame > .01) s += clipTo(top, fill(pd(on(PZ(BD[4] + .05), ellUV(CC[0], CC[1], 44, 44, 40))), '#ffe9a8', `opacity="${f(.4*st.flame)}"`));
+  // cast shadows
+  const ring = (z, r) => on(PZ(z), ellUV(CC[0], CC[1], r, r, 24));
+  let sh = castShadow([...ring(BD[4], CR), ...ring(topZ(), CR)], BD[4]) + castShadow([...ring(BD[4], DISH_R), ...ring(DISH_Z, DISH_R)], BD[4]);
+  const [x0, y0, x1, y1, z0, z1] = BOX;
+  sh += castShadow([[x0,y0,z0],[x1 + TRAY_OUT,y0,z0],[x1 + TRAY_OUT,y1,z0],[x0,y1,z0],[x0,y0,z1],[x1 + TRAY_OUT,y0,z1],[x1 + TRAY_OUT,y1,z1],[x0,y1,z1]], BD[4]);
+  s += clipTo(top, sh);
+
+  // objects, back to front
+  const parts = [
+    { at: [CC[0], CC[1], 20], svg: candle(m) },
+    { at: [68, 23, 7], svg: matchbox() },
+    ...st.spent.map(p => ({ at: addS(p.H, p.dir, MATCH_L/2), svg: matchSVG(p.H, p.dir, true) })),
+  ];
+  const mt = st.match;
+  if (mt) parts.push({ at: addS(mt.H, mt.dir, MATCH_L/2).map((v, i) => i === 2 ? v + 30 : v), svg: matchSVG(mt.H, mt.dir, mt.burnt) });
+  s += byDepth(parts);
+
+  // flames on top: glow, the candle flame, the match flame
+  const w = windW(), tt = st.clock;
+  if (st.flame > .01){
+    const [X, Y] = P(...wickTip());
+    const flick = 1 + .06*Math.sin(tt*17) + .04*Math.sin(tt*29 + 1);
+    const k = st.flame * flick * (1 - w*.55);
+    s += `<circle cx="${f(X)}" cy="${f(Y - 7)}" r="${f(30*st.flame)}" fill="url(#cglow)"/>`;
+    s += flameSVG(X, Y, 15*k, 3.6*Math.max(.5, k), w*20 + .7*Math.sin(tt*11));
+  }
+  if (mt && mt.lit){
+    const [X, Y] = P(...mt.H), k = (mt.flare || 1) * (1 + .08*Math.sin(tt*23)) * (1 - w*.5);
+    s += flameSVG(X, Y - 1, 8*k, 2.4*k, w*8 + .5*Math.sin(tt*13));
+  }
+  s += smokeSVG() + windSVG();
+  return `<defs><radialGradient id="cglow"><stop offset="0" stop-color="#ffd76a" stop-opacity=".55"/><stop offset="1" stop-color="#ffd76a" stop-opacity="0"/></radialGradient></defs>` + s;
+}
+
+/* ---------- match choreography: a queue of poses ---------- */
+const POSE = {
+  tray:   { H: [BOX[2] + TRAY_OUT - 2.6, 22, BOX[5] - 2], dir: [-1, 0, 0] },
+  lift:   { H: [86, 40, 24], dir: norm([.8, -.2, .6]) },
+  sA:     { H: [BOX[2] - 4, BOX[3] + 1.6, 7], dir: norm([.7, .15, .7]) },
+  sB:     { H: [BOX[0] + 5, BOX[3] + 1.6, 7], dir: norm([.7, .15, .7]) },
+  hold:   { H: [70, 46, 34], dir: norm([.8, -.3, .6]) },
+  back:   { H: [66, 50, 40], dir: norm([.8, -.3, .6]) },
+};
+const nearWick = () => ({ H: addS(wickTip(), [1, -.5, -.3], 2.6), dir: norm([1, -.75, .45]) });
+const go = (pose, dur, then) => st.queue.push({ pose, dur, then });
+function shakeAndDrop(){
+  const m = st.match; if (!m) return;
+  const b = { H: m.H, dir: m.dir };
+  go({ H: addS(b.H, [0, 3, 0], 1), dir: b.dir }, .1);
+  go({ H: addS(b.H, [0, -3, 0], 1), dir: b.dir }, .12);
+  go({ H: addS(b.H, [0, 3, 0], 1), dir: b.dir }, .12, () => { st.match.lit = false; st.smoke.push({ at: st.match.H.slice(), t: 0 }); });
+  const spot = SPOTS[st.spent.length % SPOTS.length];
+  go({ H: [spot[0], spot[1], BD[4] + 1.6], dir: norm([-.25, 1, 0]) }, .6, () => {
+    st.match.burnt = true; st.spent.push({ H: st.match.H.slice(), dir: st.match.dir.slice() });
+    if (st.spent.length > 3) st.spent.shift();
+    st.match = null;
+  });
+}
+function strike(thenLight){
+  st.match = { H: POSE.tray.H.slice(), dir: POSE.tray.dir.slice(), lit: false, burnt: false };
+  go(POSE.lift, .5); go(POSE.sA, .35);
+  go(POSE.sB, .22, () => { st.match.lit = true; st.match.flare = 1.6; st.match.litAt = st.clock; });
+  go(POSE.hold, .5);
+  if (thenLight) lightSeq();
+}
+function lightSeq(){
+  go(nearWick(), .8);
+  go(nearWick(), .5, () => { st.lit = true; st.burnStart = st.clock; });
+  go(POSE.back, .5);
+  shakeAndDrop();
+}
+const busy = () => st.queue.length > 0;
+
+/* ---------- animation loop ---------- */
+function step(dt){
+  st.clock += dt;
+  // match poses
+  if (st.queue.length){
+    const q = st.queue[0], m = st.match;
+    if (!q.from) q.from = { H: m.H.slice(), dir: m.dir.slice() }, q.t = 0;
+    const pose = typeof q.pose === 'function' ? q.pose() : q.pose;
+    q.t = Math.min(1, q.t + dt / q.dur);
+    const e = ease(q.t);
+    m.H = lerp3(q.from.H, pose.H, e); m.dir = norm(lerp3(q.from.dir, pose.dir, e));
+    if (q.t >= 1){ st.queue.shift(); if (q.then) q.then(); }
+  }
+  const m = st.match;
+  if (m && m.lit){
+    m.flare = Math.max(1, (m.flare || 1) - dt*1.5);
+    // a held match burns down in about nine seconds
+    if (!busy() && st.clock - m.litAt > 9){ ui.flash('the match burned down — strike another'); shakeAndDrop(); }
+  }
+  // the candle flame grows when lit, melts the wax while it burns
+  if (st.lit){ st.flame = Math.min(1, st.flame + dt*1.6); st.burn = Math.min(26, st.burn + dt*.18); }
+  // wind
+  if (st.wind){
+    st.wind.t += dt;
+    const w = windW();
+    if (st.wind.strong && w > .85){
+      if (st.lit){ st.lit = false; st.flame = 0; st.outAt = st.clock; st.smoke.push({ at: wickTip(), t: 0, drift: 1 }); }
+      if (m && m.lit && !busy()){ ui.flash('the gust blew the match out too'); shakeAndDrop(); }
+    }
+    if (st.wind.t >= WIND_T) st.wind = null;
+  }
+  st.smoke.forEach(p => p.t += dt); st.smoke = st.smoke.filter(p => p.t < 3);
+  const more = busy() || st.lit || (m && m.lit) || st.wind || st.smoke.length || st.clock - (st.outAt || -9) < 1.5;
+  if (!more) st.loop = false;
+  return !!more;
+}
+let ui;
+function run(){ if (st.loop) return; st.loop = true; ui.animate(step); }
+
+/* ---------- actions ---------- */
+function strikeMatch(st, ui){
+  if (busy()) return ui.flash('one moment…');
+  if (st.match && st.match.lit) return ui.flash('the match is already lit — light the candle');
+  strike(false); run();
+}
+function lightCandle(st, ui){
+  if (st.lit) return ui.flash('the candle is already burning');
+  if (busy()) return ui.flash('one moment…');
+  if (st.burn >= 26) return ui.flash('the candle has burned down');
+  if (st.match && st.match.lit) lightSeq();
+  else { ui.flash('striking a match first'); strike(true); }
+  run();
+}
+function blow(strong){
+  return (st, ui) => {
+    if (st.wind) return ui.flash('the wind is still blowing');
+    st.wind = { t: 0, strong };
+    if (!st.lit && !(st.match && st.match.lit)) ui.flash('nothing is lit — the air just rushes past');
+    else if (!strong && st.lit) ui.flash('the flame leans, but holds on');
+    run();
+  };
+}
+
+ui = mountFigure({
+  fig:'08', title:'Candle', hint:'strike a match, light the wick, then send a gust of wind',
+  size:[BD[2] + 2, BD[3], 90], palette:'tomato', state:st,
+  scene,
+  readout: st => st.lit ? 'burning' : 'out',
+  buttonsLabel:'Candle',
+  buttons:[
+    { label:'Strike a match', onClick: strikeMatch },
+    { label:'Light the candle', onClick: lightCandle },
+    { label:'Wind', choices: st => [
+        { label:'Gentle breeze', onClick: blow(false), disabled: !!st.wind, why:'the wind is still blowing' },
+        { label:'Strong gust', onClick: blow(true), disabled: !!st.wind, why:'the wind is still blowing' } ] },
+  ],
+  params:(st, q) => {
+    if (q.get('lit') === '1'){ st.lit = true; st.flame = 1; st.burn = +(q.get('burn') || 3); }
+    if (q.get('match') === 'lit') st.match = { ...POSE.hold, H: POSE.hold.H.slice(), lit: true, litAt: 0, burnt: false };
+    if (q.has('wind')) st.wind = { t: +q.get('wind') * WIND_T, strong: q.get('strong') === '1' };
+  },
+});
+if (st.lit || st.match || st.wind) run();
+</script>
+</body>
+</html>

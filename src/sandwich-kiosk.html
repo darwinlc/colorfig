@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sandwich kiosk</title>
+</head>
+<body>
+<script src="core.js"></script>
+<script>
+/* ---------- geometry (x = depth, y = width, z = up) ----------
+   back wall (x 0..5) · aisle where the chef stands (x ~14..40) · prep counter (x 46..100)
+   ordering kiosk on a post in front of the counter's right end (x 104..130) */
+const CNT = { x0:46, x1:100, y0:40, y1:210, h:95 };          // counter
+const WALL = { x1:5, y0:40, y1:210, h:185 };                 // back wall with the sign
+const CHX = 26;                                              // chef's depth (stands in the aisle)
+const HOME_CY = 135;                                         // chef's spot opposite the board
+const BIN_X0 = 50, BIN_X1 = 66, BIN_H = 103, BIN_HALF = 7.5;
+const CBOARD = { x0:70, x1:98, y0:108, y1:142, h:97.5, cx:84, cy:125 };
+const PLATE = { x:85, y:62, r:12, h:96.8 };
+
+/* ---------- ingredients ---------- */
+const CRUMB = '#f3dcaa', CRUST_M = { l:'#d9a05a', m:'#c08440', d:'#8e5c28' };
+const SKIN_M = { l:'#f4cfaa', m:'#e2b48a', d:'#b98760' };
+const JACKET = { l:'#fbfaf3', m:'#e3e0d2', d:'#bdb8a6' };
+const TOPS = {
+  cheese:   { name:'Cheese',   col:'#f6c943', th:1.0 },
+  ham:      { name:'Ham',      col:'#f19aa6', th:1.2 },
+  lettuce:  { name:'Lettuce',  col:'#7cc552', th:1.2 },
+  tomato:   { name:'Tomato',   col:'#e2483d', th:1.4 },
+  cucumber: { name:'Cucumber', col:'#4f9f45', th:1.2 },
+  onion:    { name:'Onion',    col:'#b47ac6', th:0.8 },
+};
+const ORDER = ['cheese','ham','lettuce','tomato','cucumber','onion'];   // bins 1..6, and the order the chef stacks them
+const BINS = ['bread', ...ORDER];
+const binY = i => 196 - i*19;
+const TH = k => k === 'bread' ? 3 : TOPS[k].th;
+const colOf = k => k === 'bread' ? CRUMB : TOPS[k].col;
+
+/* ---------- small 3D helpers ---------- */
+const lerp = (a,b,t) => a + (b-a)*t;
+const lerp3 = (a,b,t) => a.map((v,i) => lerp(v, b[i], t));
+const zRing = (x,y,z,r,n=20) => on(PZ(z), ellUV(x,y,r,r,n));
+// a flat disc lying on z (a tomato slice, a plate)
+function disc(x,y,z,r,th,m,top=m.l,w=.8){
+  const A = zRing(x,y,z,r), B = zRing(x,y,z+th,r);
+  return loft(A,B,n=>toneI(n,m)) + fill(pd(B),top) + hullInk([...A,...B], w);
+}
+// a ball (head, hand): circle at the centre with a lit patch
+function ball(c, r, m, w=1){
+  const [X,Y] = P(...c), R = r*1.2247;
+  return `<circle cx="${f(X)}" cy="${f(Y)}" r="${f(R)}" fill="${m.m}"/>`
+    + `<circle cx="${f(X+R*.12)}" cy="${f(Y-R*.14)}" r="${f(R*.8)}" fill="${m.l}"/>`
+    + `<circle cx="${f(X)}" cy="${f(Y)}" r="${f(R)}" fill="none" stroke="${INK}" stroke-width="${w}"/>`;
+}
+
+/* ---------- one layer of the sandwich, bottom at z, centred (cx,cy) ---------- */
+function layer(k, cx, cy, z){
+  if (k === 'bread'){
+    return box(cx-10,cy-10,z,cx+10,cy+10,z+3,CRUST_M,toneI,.9)
+      + shape(on(PZ(z+3.05), rrUV(cx-8.6,cy-8.6,cx+8.6,cy+8.6,2)), CRUMB, .5);
+  }
+  const t = TOPS[k], m = matOf(t.col);
+  if (k === 'cheese'){
+    const a = 18*Math.PI/180, q = [[-10.5,-10.5],[10.5,-10.5],[10.5,10.5],[-10.5,10.5]]
+      .map(([u,v]) => [cx + u*Math.cos(a) - v*Math.sin(a), cy + u*Math.sin(a) + v*Math.cos(a)]);
+    return loft(on(PZ(z),q), on(PZ(z+t.th),q), n=>toneI(n,m)) + shape(on(PZ(z+t.th),q), t.col, .8)
+      + fill(pd(zRing(cx+3,cy-4,z+t.th+.05,1.5,10)), m.m) + fill(pd(zRing(cx-4,cy+3,z+t.th+.05,1.1,10)), m.m);
+  }
+  if (k === 'ham')
+    return disc(cx,cy,z,11.5,t.th,m) + ink(pd(on(PZ(z+t.th+.05), arcUV(cx,cy,8.5,200,300,6)),false), .6);
+  if (k === 'lettuce'){
+    const wav = dz => on(PZ(z+dz), Array.from({length:40}, (_,i) => { const a = i/40*2*Math.PI, r = 12 + 1.3*Math.sin(a*9);
+      return [cx + r*Math.cos(a), cy + r*Math.sin(a)]; }));
+    return fill(pd(wav(0)), m.d) + shape(wav(t.th), t.col, .8) + line([[cx-6,cy+6,z+t.th+.05],[cx+6,cy-6,z+t.th+.05]], .5);
+  }
+  if (k === 'tomato' || k === 'cucumber'){
+    const spots = k === 'tomato' ? [[-5,-5],[5,-5],[-5,5],[5,5]] : [[-5.5,-5.5],[5.5,-5.5],[0,0],[-5.5,5.5],[5.5,5.5]];
+    const r = k === 'tomato' ? 4.8 : 3.9, inner = k === 'tomato' ? '#f59a80' : '#d7eeb0';
+    return spots.map(([u,v]) => ({ at:[cx+u, cy+v, z], svg:
+      disc(cx+u, cy+v, z, r, t.th, m) + fill(pd(zRing(cx+u, cy+v, z+t.th+.05, r*.62, 14)), inner)
+      + fill(pd(zRing(cx+u, cy+v, z+t.th+.08, r*.18, 8)), k === 'tomato' ? '#e2483d' : '#9cc86e') }))
+      .sort((p,q) => depthOf(p.at) - depthOf(q.at)).map(p => p.svg).join('');
+  }
+  if (k === 'onion'){
+    let s = '';
+    for (const [u,v,r] of [[-4,-4,5],[4,3,5.2],[-3,5,4]]){
+      const ring = pd(zRing(cx+u, cy+v, z+t.th, r, 20));
+      s += `<path d="${ring}" fill="none" stroke="${INK}" stroke-width="2.4"/><path d="${ring}" fill="none" stroke="${t.col}" stroke-width="1.3"/>`;
+    }
+    return s;
+  }
+  return '';
+}
+function stack(list, cx, cy, z){ let s = ''; for (const k of list){ s += layer(k, cx, cy, z); z += TH(k); } return s; }
+const stackH = list => list.reduce((h,k) => h + TH(k), 0);
+
+/* ---------- what each bin looks like from above ---------- */
+function binContents(k, y){
+  const z = BIN_H + .05, x0 = BIN_X0+1, x1 = BIN_X1-1, y0 = y-BIN_HALF+1, y1 = y+BIN_HALF-1;
+  const base = { bread:CRUMB, cheese:'#f6c943', ham:'#e98593', lettuce:'#5fa83e', tomato:'#c93a30', cucumber:'#3d8a37', onion:'#ecdcf1' }[k];
+  let s = fill(pd(on(PZ(z), rectUV(x0,y0,x1,y1))), base);
+  const zz = z + .05;
+  if (k === 'bread') for (const x of [53,56.5,60,63.5]) s += `<path d="${pd([[x,y0+.4,zz],[x,y1-.4,zz]],false)}" stroke="${CRUST_M.m}" stroke-width="1.6" stroke-linecap="round"/>`;
+  if (k === 'cheese') for (const [u,v] of [[-3,-2],[2,2.5],[3,-3]]) s += shape(on(PZ(zz), rectUV(58+u-3.6,y+v-3.6,58+u+3.6,y+v+3.6)), '#f6c943', .5);
+  if (k === 'ham') for (const [u,v] of [[-3,-2.5],[3,2.5],[2.5,-3]]) s += shape(zRing(58+u,y+v,zz,3.8,14), '#f3a9b3', .5);
+  if (k === 'lettuce') for (const v of [-3.5,0,3.5]) s += line([[x0+1.5,y+v,zz],[x1-1.5,y+v+1.5,zz]], .5);
+  if (k === 'tomato' || k === 'cucumber'){
+    const top = k === 'tomato' ? '#e2483d' : '#4f9f45', inner = k === 'tomato' ? '#f59a80' : '#d7eeb0';
+    for (const [u,v] of [[-4,-3],[3.5,2.5],[3.5,-3.5],[-3.5,3.5]])
+      s += shape(zRing(58+u,y+v,zz,2.9,12), top, .5) + fill(pd(zRing(58+u,y+v,zz+.02,1.8,10)), inner);
+  }
+  if (k === 'onion') for (const [u,v] of [[-3,-2.5],[3,2.5],[3,-3.5],[-3.5,3.5]]){
+    const ring = pd(zRing(58+u,y+v,zz,2.7,14));
+    s += `<path d="${ring}" fill="none" stroke="#b47ac6" stroke-width="1.1"/>`;
+  }
+  return s;
+}
+function bins(){
+  let s = '';
+  for (let i = 0; i < BINS.length; i++){              // index 6 has the smallest y: draw far-right first
+    const j = BINS.length - 1 - i, y = binY(j);
+    s += box(BIN_X0, y-BIN_HALF, CNT.h, BIN_X1, y+BIN_HALF, BIN_H, METAL, toneI, .9);
+    s += clipTo(on(PZ(BIN_H), rectUV(BIN_X0+1,y-BIN_HALF+1,BIN_X1-1,y+BIN_HALF-1)), binContents(BINS[j], y));
+    s += ink(pd(on(PZ(BIN_H), rectUV(BIN_X0+1,y-BIN_HALF+1,BIN_X1-1,y+BIN_HALF-1))), .7);
+  }
+  return s;
+}
+
+/* ---------- state ---------- */
+const st = { pal:'tomato', sel:{ cheese:true, cucumber:true }, order:null, orderNo:0, job:null,
+             stackB:[], plated:null, chef:{ y:HOME_CY, hand:null, hold:null } };
+const restHand = cy => [CHX+18, cy-15, 110];
+st.chef.hand = restHand(HOME_CY);
+
+/* ---------- the chef ---------- */
+const shoulderR = cy => [CHX+2, cy-10.5, 136];
+function elbowOf(S, H, a=34){
+  const d = sub(H,S), len = Math.hypot(...d), u = d.map(v => v/len), mid = lerp3(S,H,.5);
+  const h = Math.sqrt(Math.max(0, a*a - (len/2)*(len/2)));
+  const pref = [0,-.55,-1], k = dot(pref,u), bend = norm(pref.map((v,i) => v - k*u[i]));
+  return mid.map((v,i) => v + bend[i]*h);
+}
+function chefBody(cy){
+  const cx = CHX;
+  const ring = (z,ru,rv) => on(PZ(z), ellUV(cx,cy,ru,rv,22));
+  const r0 = ring(60,9,11.5), r1 = ring(126,9.5,12.5), r2 = ring(136,7.5,10.5), r3 = ring(140,3.6,3.6);
+  let s = loft(r0,r1,n=>toneI(n,JACKET)) + loft(r1,r2,n=>toneI(n,JACKET)) + loft(r2,r3,n=>toneI(n,JACKET))
+        + hullInk([...r0,...r1,...r2], 2.2);
+  // jacket: double row of buttons and a neckerchief
+  for (const z of [104,113,122]) for (const dy of [-3.2,3.2]){
+    const a = Math.atan2(dy, 9.4) , p = [cx + 9.3*Math.cos(a)+.3, cy + 11.5*Math.sin(a)*1.0, z];
+    s += fill(pd(on(PX(p[0]), ellUV(p[1],p[2],1,1,8))), '#8f989b');
+  }
+  s += shape([[cx+6.5,cy-4,136],[cx+7.5,cy+4,136],[cx+10,cy,128]], PALS[st.pal].l, .8);
+  // neck, head, face, hat
+  s += cyl(cx,cy,139,148,3.4,SKIN_M,toneI,.9);
+  const hc = [cx,cy,154.5], hr = 8.5;
+  s += ball(hc, hr, SKIN_M, 1.6);
+  const fd = norm([1,.38,.05]), sv = norm([-.38,1,0]);
+  const fp = (a,b,c) => P(hc[0]+fd[0]*a+sv[0]*b, hc[1]+fd[1]*a+sv[1]*b, hc[2]+c);
+  for (const b of [-3,3]){ const [X,Y] = fp(7.6,b,1.8); s += `<circle cx="${f(X)}" cy="${f(Y)}" r="1.1" fill="${INK}"/>`; }
+  for (const b of [-5,5]){ const [X,Y] = fp(6.6,b,-1.4); s += `<circle cx="${f(X)}" cy="${f(Y)}" r="1.5" fill="#ef8f86" opacity=".6"/>`; }
+  const sm = [-2.6,-1.3,0,1.3,2.6].map(b => fp(8, b, -2.6 - .9*Math.cos(b/2.6*Math.PI/2)));
+  s += `<path d="M${sm.map(q => f(q[0])+' '+f(q[1])).join('L')}" fill="none" stroke="${INK}" stroke-width=".9" stroke-linecap="round"/>`;
+  // toque: a band and a puffed top
+  const h0 = zRing(cx,cy,159.5,7.2), h1 = zRing(cx,cy,168,7.4), h2 = zRing(cx,cy,171,9.8), h3 = zRing(cx,cy,175.5,9.2), h4 = zRing(cx,cy,178.5,5.5), h5 = zRing(cx,cy,179.4,.4);
+  s += loft(h0,h1,n=>toneI(n,JACKET)) + loft(h1,h2,n=>toneI(n,JACKET)) + loft(h2,h3,n=>toneI(n,JACKET))
+     + loft(h3,h4,n=>toneI(n,JACKET)) + loft(h4,h5,n=>toneI(n,JACKET));
+  s += line(on(PZ(168), ellUV(cx,cy,7.4,7.4,22)).slice(3,15), .7);
+  s += hullInk([...h0,...h1,...h2,...h3,...h4], 1.6);
+  // left arm on the hip
+  const LS = [cx+2, cy+10.5, 136], LE = [cx+3, cy+19, 120], LH = [cx+9, cy+12.5, 108];
+  s += rod(LS, LE, 3.6, JACKET, toneI, 1.1) + rod(LE, LH, 3.1, JACKET, toneI, 1.1) + ball(LH, 2.9, SKIN_M, 1);
+  return s;
+}
+function chefArm(cy, hand, hold){
+  const S = shoulderR(cy), E = elbowOf(S, hand);
+  let s = '';
+  // what the hand carries hangs just under it
+  if (hold === 'stack') s += stack(st.stackB, hand[0], hand[1], hand[2] - stackH(st.stackB) - 1.2);
+  else if (hold) s += layer(hold, hand[0], hand[1], hand[2] - TH(hold) - 1.2);
+  const wrist = lerp3(E, hand, .78);
+  s += rod(S, E, 3.6, JACKET, toneI, 1.1) + rod(E, wrist, 3.1, JACKET, toneI, 1.1) + rod(wrist, hand, 2.2, SKIN_M, toneI, .9)
+     + ball(hand, 3, SKIN_M, 1);
+  return s;
+}
+
+/* ---------- ordering kiosk (screen tilted back on a post) ---------- */
+const TILT = 50*Math.PI/180, SU = [-Math.sin(TILT),0,Math.cos(TILT)], SN = [Math.cos(TILT),0,Math.sin(TILT)];
+const SL = 34, KY0 = 4, KY1 = 36;
+const KQ = (s, y, o=0) => [125 + s*SU[0] + o*SN[0], y, 95 + s*SU[2] + o*SN[2]];
+const onScreen = uv => uv.map(([y,s]) => KQ(s, y, .15));
+const TILE_Y = [25, 16.2, 7.4], TILE_S = [22, 13.5], TILE = 7.6;
+function kiosk(m){
+  let s = '';
+  s += box(106,6,0,129,34,2.5,DARK,toneI,1.1);
+  s += box(114,16,2.5,121,24,100,m,tone,1.1);
+  // slab: edge faces, then the tilted top
+  s += shape([KQ(0,KY0),KQ(0,KY1),KQ(0,KY1,-3),KQ(0,KY0,-3)], tone(SU.map(v=>-v),m), 1);
+  s += shape([KQ(0,KY1),KQ(SL,KY1),KQ(SL,KY1,-3),KQ(0,KY1,-3)], tone([0,1,0],m), 1);
+  s += shape([KQ(0,KY0),KQ(0,KY1),KQ(SL,KY1),KQ(SL,KY0)], tone(SN,m), 1.2);
+  s += shape(onScreen(rectUV(6.2,2.5,33.8,31.5)), '#1d2a26', 1.2);
+  // topping tiles: tap to add / remove
+  ORDER.forEach((k,i) => {
+    const y0 = TILE_Y[i%3], s0 = TILE_S[1 - Math.floor(i/3)], on_ = st.sel[k], yc = y0 + TILE/2, sc = s0 + 3.75;
+    let t = shape(onScreen(rrUV(y0,s0,y0+TILE,s0+7.5,1.2)), on_ ? '#fff4d6' : '#34453f', on_ ? 1 : .6);
+    const icon = shape(onScreen(ellUV(yc,sc,2.5,2.5,16)), TOPS[k].col, .6)
+      + (k === 'cucumber' || k === 'tomato' ? fill(pd(onScreen(ellUV(yc,sc,1.4,1.4,12))), k === 'tomato' ? '#f59a80' : '#d7eeb0') : '')
+      + (k === 'onion' ? fill(pd(onScreen(ellUV(yc,sc,1.4,1.4,12))), on_ ? '#fff4d6' : '#34453f') : '');
+    t += on_ ? icon : `<g opacity=".4">${icon}</g>`;
+    if (on_) t += `<path d="${pd(onScreen([[y0+1.4,s0+6.4],[y0+2.4,s0+5.2],[y0+.9,s0+5.6]]))}" fill="#43c25c"/>`;
+    s += act('tile', t, `data-k="${k}"`);
+  });
+  // confirm bar
+  const any = ORDER.some(k => st.sel[k]);
+  const label = st.job ? 'MAKING' : st.plated ? 'READY' : 'CONFIRM';
+  const barCol = st.job ? '#f2b431' : st.plated ? '#76a0e2' : any ? '#43c25c' : '#55635d';
+  let b = shape(onScreen(rrUV(9,4,31,11,2)), barCol, 1);
+  b += `<text transform="${txM(P(...KQ(6.2,20,.3)), Dv(0,-1,0), Dv(-SU[0],0,-SU[2]))}" font-size="4.2" fill="${INK}" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-weight="800" letter-spacing=".08em">${label}</text>`;
+  s += act('confirm', b);
+  s += fill(pd(onScreen([[8,26],[12,26],[30,31],[26,31]])), '#ffffff', 'opacity=".12" pointer-events="none"');
+  s += hullInk([KQ(0,KY0),KQ(0,KY1),KQ(SL,KY1),KQ(SL,KY0),KQ(0,KY0,-3),KQ(0,KY1,-3),KQ(SL,KY1,-3),KQ(SL,KY0,-3)], 2);
+  return s;
+}
+
+/* ---------- back wall: sign + kitchen order screen ---------- */
+function wall(m){
+  let s = box(0,WALL.y0,0,WALL.x1,WALL.y1,WALL.h,m,tone,1.2);
+  const F = PX(WALL.x1+.1);
+  s += shape(on(F, rrUV(52,160,198,180,5)), '#fff4d6', 1.3);
+  s += tx(WALL.x1+.2, 125, 165.5, 'SANDWICH BAR', 12.5, m.d, 800);
+  // kitchen screen: the confirmed order lands here
+  s += shape(on(F, rrUV(46,118,98,148,2.5)), '#1d2a26', 1.3);
+  if (st.order){
+    s += tx(WALL.x1+.2, 72, 139, `ORDER ${String(st.orderNo).padStart(2,'0')}`, 5.2, '#8af0ae', 800);
+    const items = st.order, step = 6.2, y0 = 72 + (items.length-1)*step/2;
+    items.forEach((k,i) => s += shape(on(PX(WALL.x1+.2), ellUV(y0 - i*step, 130, 2.4, 2.4, 14)), TOPS[k].col, .5));
+    s += tx(WALL.x1+.2, 72, 121.5, st.job ? 'IN PROGRESS' : 'DONE', 3.6, st.job ? '#f2b431' : '#8af0ae', 700);
+  } else s += tx(WALL.x1+.2, 72, 131, 'NO ORDERS', 4.6, '#8af0ae', 700);
+  s += hullInk([[0,WALL.y0,0],[WALL.x1,WALL.y0,0],[WALL.x1,WALL.y1,0],[0,WALL.y1,0],[0,WALL.y0,WALL.h],[WALL.x1,WALL.y0,WALL.h],[WALL.x1,WALL.y1,WALL.h],[0,WALL.y1,WALL.h]], 2.6);
+  return s;
+}
+
+/* ---------- counter ---------- */
+const cntCorners = () => { const o = []; for (const x of [CNT.x0,CNT.x1]) for (const y of [CNT.y0,CNT.y1]) for (const z of [0,CNT.h]) o.push([x,y,z]); return o; };
+function counter(m){
+  let s = box(CNT.x0,CNT.y0,0,CNT.x1,CNT.y1,CNT.h,m,tone,1.2);
+  s += shape(on(PZ(CNT.h+.05), rectUV(CNT.x0,CNT.y0,CNT.x1,CNT.y1)), METAL.l, 1);
+  s += line([[CNT.x1-2,CNT.y0,CNT.h+.1],[CNT.x1-2,CNT.y1,CNT.h+.1]], .6);
+  const F = PX(CNT.x1+.1);
+  s += shape(on(F, rectUV(CNT.y0,0,CNT.y1,7)), m.d, .9);
+  s += shape(on(F, rrUV(62,50,188,72,5)), '#fff4d6', 1.2);
+  s += tx(CNT.x1+.2, 125, 57.5, 'MADE TO ORDER', 10, m.d, 800);
+  s += shape(on(PY(CNT.y1+.1), rrUV(58,40,88,72,5)), mix('#fff4d6', '#000000', .12), 1.1);
+  s += txY(73, CNT.y1+.2, 52.5, 'FRESH', 7, m.d, 800);
+  s += hullInk(cntCorners(), 2.8);
+  return s;
+}
+
+/* ---------- scene ---------- */
+function scene(_, m){
+  let s = '';
+  // shadows
+  s += castShadow([[0,WALL.y0,0],[WALL.x1,WALL.y0,0],[WALL.x1,WALL.y1,0],[0,WALL.y1,0],[0,WALL.y0,WALL.h],[WALL.x1,WALL.y0,WALL.h],[WALL.x1,WALL.y1,WALL.h],[0,WALL.y1,WALL.h]]);
+  s += castShadow(cntCorners());
+  s += castShadow([[106,6,0],[129,6,0],[129,34,0],[106,34,0],[114,16,95],[121,24,95],KQ(0,KY0),KQ(0,KY1),KQ(SL,KY1),KQ(SL,KY0)]);
+  s += wall(m);
+  s += chefBody(st.chef.y);
+  s += counter(m);
+  // on the counter: bins, cutting board with the sandwich being built, the pickup plate
+  s += bins();
+  s += box(CBOARD.x0,CBOARD.y0,CNT.h,CBOARD.x1,CBOARD.y1,CBOARD.h,WOOD,toneI,1);
+  if (st.chef.hold !== 'stack') s += stack(st.stackB, CBOARD.cx, CBOARD.cy, CBOARD.h);
+  s += disc(PLATE.x,PLATE.y,CNT.h,PLATE.r,1.8,CERAMIC,CERAMIC.l,1.1) + ink(pd(zRing(PLATE.x,PLATE.y,PLATE.h+.05,8.5,24)), .5);
+  if (st.plated) s += stack(st.plated, PLATE.x, PLATE.y, PLATE.h);
+  s += chefArm(st.chef.y, st.chef.hand, st.chef.hold);
+  s += kiosk(m);
+  return s;
+}
+
+/* ---------- the chef's job: one segment per move, eased ---------- */
+function buildJob(order){
+  const segs = [], items = ['bread', ...order, 'bread'];
+  const add = (dur, cy, hand, hold=null, end=null) => segs.push({ dur, cy, hand, hold, end });
+  const boardCy = CBOARD.cy + 10, plateCy = PLATE.y + 10;
+  let z = CBOARD.h;
+  for (const k of items){
+    const bi = BINS.indexOf(k), by = binY(bi), bcy = Math.min(198, by + 10.5), th = TH(k), zTop = z;
+    add(.42, bcy, [58, by, BIN_H + 10]);
+    add(.14, bcy, [58, by, BIN_H + th + 1.4]);
+    add(.16, bcy, [58, by, BIN_H + 11], k);
+    add(.42, boardCy, [CBOARD.cx, CBOARD.cy, zTop + th + 9], k);
+    add(.14, boardCy, [CBOARD.cx, CBOARD.cy, zTop + th + 1.2], k, () => st.stackB.push(k));
+    z += th;
+  }
+  const h = z - CBOARD.h;
+  add(.28, boardCy, [CBOARD.cx, CBOARD.cy, z + 5]);
+  add(.14, boardCy, [CBOARD.cx, CBOARD.cy, z + 1.2]);
+  add(.5, plateCy, [PLATE.x, PLATE.y, PLATE.h + h + 9], 'stack');
+  add(.16, plateCy, [PLATE.x, PLATE.y, PLATE.h + h + 1.2], 'stack', () => { st.plated = st.stackB; st.stackB = []; });
+  add(.5, HOME_CY, restHand(HOME_CY));
+  return { segs, i:0, t:0, from:{ cy:st.chef.y, hand:st.chef.hand.slice() } };
+}
+function runJob(ui){
+  ui.animate(dt => {
+    const j = st.job; if (!j) return false;
+    const sg = j.segs[j.i];
+    j.t = Math.min(1, j.t + dt/sg.dur);
+    const e = ease(j.t);
+    st.chef.y = lerp(j.from.cy, sg.cy, e); st.chef.hand = lerp3(j.from.hand, sg.hand, e); st.chef.hold = sg.hold;
+    if (j.t >= 1){
+      if (sg.end) sg.end();
+      j.from = { cy:sg.cy, hand:sg.hand.slice() }; j.i++; j.t = 0;
+      if (j.i >= j.segs.length){ st.job = null; st.chef.hold = null; return false; }
+    }
+    return true;
+  });
+}
+
+/* ---------- actions ---------- */
+let ui;
+function toggle(k){ st.sel[k] = !st.sel[k]; }
+function confirmOrder(st, u){
+  if (st.job) return u.flash('the chef is still making your sandwich');
+  if (st.plated) return u.flash('take your sandwich first');
+  const order = ORDER.filter(k => st.sel[k]);
+  if (!order.length) return u.flash('pick at least one topping');
+  st.order = order; st.orderNo++;
+  st.job = buildJob(order);
+  runJob(u);
+}
+function take(st, u){
+  if (st.plated){ st.plated = null; return u.flash('enjoy your sandwich!'); }
+  if (st.job) return u.flash('the chef is still making it');
+  u.flash('nothing on the plate yet: confirm an order');
+}
+
+ui = mountFigure({
+  fig:'07', title:'Sandwich kiosk', hint:'tap toppings on the kiosk screen, then confirm',
+  size:[130, 210, 185], palette:'tomato', state:st, credit:true,
+  scene,
+  buttonsLabel:'Order',
+  buttons:[
+    { label:'Pick toppings', choices: st => ORDER.map(k => ({ label: st.sel[k] ? `${TOPS[k].name} (on)` : `+ ${TOPS[k].name}`, onClick: () => toggle(k) })) },
+    { label:'Confirm order', onClick: confirmOrder },
+    { label:'Take sandwich', onClick: take },
+  ],
+  acts:{
+    tile: (st, el) => toggle(el.dataset.k),
+    confirm: (st, el, u) => confirmOrder(st, u),
+  },
+  params:(st, q) => {
+    if (q.has('sel')){ for (const k of ORDER) st.sel[k] = false; q.get('sel').split('.').forEach(k => { if (k in st.sel || TOPS[k]) st.sel[k] = true; }); }
+    if (q.get('plated') === '1'){ st.order = ORDER.filter(k => st.sel[k]); st.orderNo = 1; st.plated = ['bread', ...st.order, 'bread']; }
+  },
+});
+</script>
+</body>
+</html>

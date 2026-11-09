@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Escalator</title>
+</head>
+<body>
+<script src="core.js"></script>
+<script>
+/* ---------- geometry (x = depth, y = width, z = up); 1 unit = 5 cm ----------
+   The escalator rises toward -y (screen right): the bottom landing is at y = 148, the top landing at y = 28,
+   where it meets the upper floor (a block at y 0..28). A step's position p runs from 0 (bottom) to 120 (top). */
+const BD = [0, 0, 56, 184, 3, 5];                         // board = the lower floor
+const Z0 = 3, Z1 = 53, Y_BOT = 148, FLAT = 18, TAN = Math.tan(Math.PI/6), RUN = (Z1 - Z0) / TAN;
+const SPAN = 120, PITCH = 8;                              // step loop length and step depth
+const SX0 = 12, SX1 = 36.5;                               // step width (x)
+const GB = 10.5, GF = 39.5, DF = 41;                      // back glass, front glass, front cladding planes
+const END_T = 30, END_B = 150, NEWEL_R = 8.25;            // balustrade ends (y)
+const Zline = p => Z0 + Math.min(RUN, Math.max(0, p - FLAT)) * TAN;
+const Zy = y => Zline(Y_BOT - y);
+const BLOCK = [0, 0, 50, 28];
+const ENTRY = { bot: 152, top: 32 };
+
+const STEP_T = { l:'#b9c0c2', m:'#a3abad', d:'#7d8689' }, RISER = '#6f777a', EDGE = '#f2c230';
+const CONC = { l:'#e3dfd5', m:'#c9c4b8', d:'#9e998e' };
+const SHIRTS = ['#e2473a','#3e86d9','#f2c230','#38a565','#8c4bd1','#f08a2b','#d94f86','#fbf7ea'];
+const SKIN = ['#f0c8a0','#c98e62','#8a5a3c','#f3d2b4'], HAIR = ['#2a2522','#6b4a33','#c9a24a','#1c1c1c'];
+const PANTS = [matOf('#2f3a4f'), matOf('#5b5650'), matOf('#3a5a7a')];
+
+/* ---------- state ---------- */
+const VMAX = 10, VSLOW = 3, ACC = 3.2;                    // units/s (10 = 0.5 m/s)
+const FLOWS = { none:{ label:'Nobody', every:0 }, few:{ label:'A few people', every:3.6 }, busy:{ label:'Rush hour', every:1.15 } };
+const st = { pal:'cobalt', v:0, dir:1, dirT:1, travel:0, idle:99, flow:'few', flowT:2.5, people:[], seq:0, clock:0 };
+const mod = (a, n) => ((a % n) + n) % n;
+const riders = () => st.people.filter(o => o.state === 'ride');
+const sideOf = d => d > 0 ? 'bot' : 'top';
+
+/* ---------- a person standing (or walking) with feet at (x, y, z) ---------- */
+function person(o){
+  const { x, y, z } = o, walking = o.state !== 'ride' && o.state !== 'wait', s = walking ? 2.6*Math.sin(o.phase) : 0;
+  const shirt = matOf(o.shirt), pants = o.pants;
+  let g = '';
+  g += rod([x - 4.3, y, z + 25.5], [x - 4.7, y - s*.8, z + 15.5], 1.1, shirt, toneI, .8);
+  g += rod([x - 1.8, y + s, z + .8], [x - 1.8, y, z + 15], 1.7, pants, toneI, .9);
+  g += rod([x + 1.8, y - s, z + .8], [x + 1.8, y, z + 15], 1.7, pants, toneI, .9);
+  g += rod([x, y, z + 14], [x, y, z + 26.5], 3.7, shirt, toneI, 1.1, 3.1);
+  g += rod([x + 4.3, y, z + 25.5], [x + 4.7, y + s*.8, z + 15.5], 1.1, shirt, toneI, .8);
+  const [X, Y] = P(x, y, z + 30.6), r = 3.3;
+  g += `<circle cx="${f(X)}" cy="${f(Y)}" r="${r}" fill="${o.skin}" stroke="${INK}" stroke-width=".9"/>`;
+  g += `<path d="M${f(X - r)} ${f(Y - .2)}A${r} ${r} 0 0 1 ${f(X + r)} ${f(Y - .2)}Z" fill="${o.hair}" stroke="${INK}" stroke-width=".9"/>`;
+  return o.alpha < 1 ? `<g opacity="${f(Math.max(0, o.alpha))}">${g}</g>` : g;
+}
+
+/* ---------- steps ---------- */
+function stepSVG(p){
+  const yf = Y_BOT - p, z = Zline(p), zLow = Zline(p - PITCH);
+  let s = '';
+  if (z - zLow > .2){
+    s += shape([[SX0, yf + PITCH, zLow], [SX1, yf + PITCH, zLow], [SX1, yf + PITCH, z], [SX0, yf + PITCH, z]], RISER, .7);
+    let c = ''; for (let x = SX0 + 2.5; x < SX1; x += 3) c += pd([[x, yf + PITCH + .05, zLow + .3], [x, yf + PITCH + .05, z - .3]], false);
+    s += `<path d="${c}" fill="none" stroke="#565e61" stroke-width=".6"/>`;
+  }
+  s += shape([[SX0, yf, z], [SX1, yf, z], [SX1, yf + PITCH, z], [SX0, yf + PITCH, z]], STEP_T.l, .8);
+  let gr = ''; for (let x = SX0 + 3; x < SX1 - 1; x += 3) gr += pd([[x, yf + 1.2, z + .05], [x, yf + PITCH - .4, z + .05]], false);
+  s += `<path d="${gr}" fill="none" stroke="${STEP_T.d}" stroke-width=".55"/>`;
+  s += fill(pd([[SX0, yf, z + .06], [SX1, yf, z + .06], [SX1, yf + 1, z + .06], [SX0, yf + 1, z + .06]]), EDGE);   // yellow nose
+  return s;
+}
+
+/* ---------- balustrades ---------- */
+const sampleY = (a, b, n = 40) => Array.from({ length: n + 1 }, (_, i) => a + (b - a) * i / n);
+function glassUV(){
+  const bot = sampleY(END_B, END_T).map(y => [y, Zy(y) + 1.5]);
+  const top = sampleY(END_T, END_B).map(y => [y, Zy(y) + 18]);
+  return [...bot, ...arcUV(END_T, Z1 + 9.75, NEWEL_R, 270, 90, 10), ...top, ...arcUV(END_B, Z0 + 9.75, NEWEL_R, 90, -90, 10)];
+}
+const railUV = () => [...arcUV(END_B, Z0 + 9.75, NEWEL_R, -60, 90, 8), ...sampleY(END_B, END_T).map(y => [y, Zy(y) + 18]), ...arcUV(END_T, Z1 + 9.75, NEWEL_R, 90, 240, 8)];
+function deck(x0, x1, col){
+  const a = sampleY(END_B, BLOCK[3], 30).map(y => [x1, y, Zy(y) + 1.5]), b = sampleY(BLOCK[3], END_B, 30).map(y => [x0, y, Zy(y) + 1.5]);
+  return shape([...a, ...b], col, .8);
+}
+function balustrade(x){
+  const g = on(PX(x), glassUV());
+  let s = fill(pd(g), '#cfe9f0', 'opacity=".32"');
+  s += clipTo(g, fill(pd(on(PX(x), [[120, 0], [126, 0], [86, 80], [80, 80]])), '#ffffff', 'opacity=".35"')
+               + fill(pd(on(PX(x), [[70, 20], [73, 20], [40, 80], [37, 80]])), '#ffffff', 'opacity=".35"'));
+  s += ink(pd(g), .9);
+  const r = pd(on(PX(x + .2), railUV()), false);
+  s += `<path d="${r}" fill="none" stroke="${INK}" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round"/>`;
+  s += `<path d="${r}" fill="none" stroke="#3d3935" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>`;
+  s += `<path d="${r}" fill="none" stroke="#8a847a" stroke-width="1" stroke-dasharray="2.5 7" stroke-dashoffset="${f(-st.travel)}" stroke-linecap="round"/>`;
+  return s;
+}
+function cladding(m){
+  const top = sampleY(END_B, BLOCK[3], 40).map(y => [DF, y, Zy(y) + 1.5]);
+  const bot = sampleY(BLOCK[3], END_B, 40).map(y => [DF, y, Math.max(Z0, Zy(y) - 14)]);
+  let s = fill(pd([...top, ...bot]), tone([1,0,0], m));
+  let seams = '';
+  for (const y of [126, 108, 90, 72, 54]) seams += pd([[DF + .05, y, Math.max(Z0, Zy(y) - 14)], [DF + .05, y, Zy(y) + 1.5]], false);
+  s += `<path d="${seams}" fill="none" stroke="${INK}" stroke-width=".7" opacity=".6"/>`;
+  s += ink(pd([...top, ...bot]), 2);
+  return s;
+}
+
+/* ---------- the upper floor, with the status sign ---------- */
+function upperFloor(){
+  const [x0, y0, x1, y1] = BLOCK;
+  let s = box(x0, y0, Z0, x1, y1, Z1, CONC, tone, 1.6);
+  let t = ''; for (const y of [7, 14, 21]) t += pd([[x0 + 1, y, Z1 + .05], [x1 - 1, y, Z1 + .05]], false);
+  s += `<path d="${t}" fill="none" stroke="${CONC.d}" stroke-width=".6"/>`;
+  // status sign on the front of the upper floor
+  const run = st.v >= VMAX*.95, stopped = st.v < .05, col = stopped ? '#ff6b5e' : '#8af0ae';
+  s += shape(on(PX(x1 + .15), rrUV(4, 30, 24, 46, 2)), '#1d2a26', 1.2);
+  const word = st.dir !== st.dirT ? 'CHANGE' : stopped ? 'STOP' : run ? 'RUN' : 'SLOW';
+  s += tx(x1 + .25, 14, 39, st.dir > 0 ? 'UP' : 'DOWN', 5, col, 800) + tx(x1 + .25, 14, 32.8, word, 3.6, col, 800);
+  return s;
+}
+
+/* ---------- scene ---------- */
+function scene(st, m){
+  const top = boardTop(...BD);
+  let s = board(...BD, BOARD);
+  // shadows: upper floor + the escalator body
+  const [x0, y0, x1, y1] = BLOCK;
+  let sh = castShadow([[x0,y0,Z0],[x1,y0,Z0],[x1,y1,Z0],[x0,y1,Z0],[x0,y0,Z1],[x1,y0,Z1],[x1,y1,Z1],[x0,y1,Z1]], Z0);
+  const body = [];
+  for (const y of sampleY(END_B, y1, 8)) for (const x of [GB - 2, DF]) body.push([x, y, Zy(y) + 18], [x, y, Z0]);
+  sh += castShadow(body, Z0);
+  s += clipTo(top, sh);
+  // people on the lower floor between the board edge and the balustrade ends are drawn last
+  const near = st.people.filter(o => o.state !== 'ride' && o.y > END_B + 6);
+  const mid = st.people.filter(o => !near.includes(o));
+
+  s += upperFloor();
+  s += deck(GB - 2.5, SX0, tone([0,0,1], m)) + balustrade(GB);
+  // steps from p = 0..120, back to front
+  const steps = [];
+  for (let i = 0; i < SPAN / PITCH; i++){ const p = mod(st.travel + i*PITCH, SPAN); steps.push({ at: [24, Y_BOT - p + 4, Zline(p)], svg: stepSVG(p) }); }
+  s += byDepth(steps);
+  // comb plates at both landings
+  s += box(SX0 - 1, 140, Z0, SX1 + 1, 156, Z0 + .6, METAL, toneI, .9) + line([[SX0, 140, Z0 + .6], [SX1, 140, Z0 + .6]], 1.3);
+  s += box(SX0 - 1, BLOCK[3] - 6, Z1, SX1 + 1, 36, Z1 + .6, METAL, toneI, .9) + line([[SX0, 36, Z1 + .6], [SX1, 36, Z1 + .6]], 1.3);
+  s += byDepth(mid.map(o => ({ at: [o.x, o.y, o.z + 1], svg: person(o) })));
+  // skirt, front cladding, front balustrade
+  s += deck(SX1, GF - .6, METAL.l) + cladding(m) + deck(GF - .6, DF, mix(tone([0,0,1], m), '#ffffff', .15)) + balustrade(GF);
+  s += byDepth(near.map(o => ({ at: [o.x, o.y, o.z], svg: person(o) })));
+  return s;
+}
+
+/* ---------- people ---------- */
+const pick = a => a[Math.floor(Math.random() * a.length)];
+function spawn(side){
+  const n = st.people.filter(o => o.side === side && (o.state === 'approach' || o.state === 'wait')).length;
+  if (n >= 3) return false;
+  const k = st.seq++;
+  st.people.push({ id:k, side, state:'approach', x: 22 + 4*Math.random(), y: side === 'bot' ? BD[3] - 2 : 1, z: side === 'bot' ? Z0 : Z1,
+    shirt: SHIRTS[k % SHIRTS.length], skin: pick(SKIN), hair: pick(HAIR), pants: pick(PANTS), phase: Math.random()*6, alpha: 0 });
+  return true;
+}
+const WALK = 13;
+function movePeople(dt){
+  const canBoard = st.dir === st.dirT && st.v >= VMAX*.45;
+  const frac = mod(st.travel, PITCH);
+  for (const side of ['bot', 'top']){
+    const sgn = side === 'bot' ? 1 : -1;     // queue extends away from the entry: +y at the bottom, -y at the top
+    const q = st.people.filter(o => o.side === side && (o.state === 'approach' || o.state === 'wait')).sort((a, b) => sgn*(a.y - b.y));
+    q.forEach((o, rank) => {
+      o.alpha = Math.min(1, o.alpha + dt*3);
+      if (sideOf(st.dirT) !== side){ o.state = 'leave'; o.dirY = sgn; return; }     // the escalator now runs the other way
+      const goal = ENTRY[side] + sgn*11*rank, d = goal - o.y;
+      if (Math.abs(d) > .3){ o.y += Math.sign(d) * Math.min(Math.abs(d), WALK*dt); o.phase += dt*9; o.state = 'approach'; }
+      else { o.y = goal; o.state = 'wait'; }
+      // step on when a fresh step lines up under the feet
+      if (rank === 0 && o.state === 'wait' && canBoard){
+        const ok = side === 'bot' ? frac < 1.2 : frac > PITCH - 1.2;
+        if (ok){ const p = side === 'bot' ? frac : SPAN - PITCH + frac; o.state = 'ride'; o.off = p - st.travel; }
+      }
+    });
+  }
+  for (const o of st.people){
+    if (o.state === 'ride'){
+      const p = st.travel + o.off;
+      o.y = Y_BOT - p + 4; o.z = Zline(p);
+      if (st.dir > 0 && p >= SPAN - 3){ o.state = 'leave'; o.dirY = -1; o.z = Z1; }
+      if (st.dir < 0 && p <= 3){ o.state = 'leave'; o.dirY = 1; o.z = Z0; }
+    } else if (o.state === 'leave'){
+      o.y += o.dirY * WALK * dt; o.phase += dt*9;
+      if (o.dirY > 0) o.alpha = Math.min(o.alpha, (BD[3] - 1 - o.y) / 12); else o.alpha = Math.min(o.alpha, (o.y - 1) / 10);
+      if (o.y < BD[1] + 6 && o.z === Z0) o.alpha = 0;
+    }
+  }
+  st.people = st.people.filter(o => o.state !== 'leave' || o.alpha > 0);
+}
+
+/* ---------- the drive: speed follows demand ---------- */
+function drive(dt){
+  const onIt = riders().length;
+  const demand = onIt || st.people.some(o => (o.state === 'approach' || o.state === 'wait') && o.side === sideOf(st.dirT));
+  let target;
+  if (st.dir !== st.dirT){
+    target = onIt ? VMAX : 0;                                   // let the riders off, stop, then reverse
+    if (!onIt && st.v === 0){ st.dir = st.dirT; st.idle = 0; }
+  } else if (demand){ st.idle = 0; target = VMAX; }
+  else { st.idle += dt; target = st.idle < 2.5 ? VMAX : st.idle < 8 ? VSLOW : 0; }
+  const a = target > st.v ? ACC : ACC*.8;
+  st.v = target > st.v ? Math.min(target, st.v + a*dt) : Math.max(target, st.v - a*dt);
+  st.travel += st.dir * st.v * dt;
+}
+function step(dt){
+  st.clock += dt;
+  const fl = FLOWS[st.flow];
+  if (fl.every){ st.flowT += dt; if (st.flowT >= fl.every){ st.flowT = 0; spawn(sideOf(st.dirT)); } }
+  drive(dt); movePeople(dt);
+  return true;
+}
+
+let ui;
+ui = mountFigure({
+  fig:'09', title:'Escalator', hint:'send people — it slows and stops when nobody rides, and wakes when someone comes',
+  size:[BD[2], BD[3], 90], palette:'cobalt', state:st,
+  scene,
+  readout: st => `${st.v.toFixed(1)}`,
+  stats: st => [
+    { label:'Speed', value: (st.v * .05).toFixed(2) + ' m/s' },
+    { label:'Riding', value: String(riders().length), small:true },
+    { label:'Direction', value: st.dirT > 0 ? 'Up' : 'Down', small:true },
+  ],
+  buttonsLabel:'Escalator',
+  buttons:[
+    { label:'Send a person', onClick: (st, ui) => { if (!spawn(sideOf(st.dirT))) ui.flash('the queue is full — wait a moment'); } },
+    { label:'People', choices: st => Object.entries(FLOWS).map(([k, fl]) => ({ label: fl.label, current: st.flow === k,
+        onClick: () => { st.flow = k; st.flowT = fl.every ? fl.every - .2 : 0; } })) },
+    { label:'Direction', choices: st => [[1, 'Up'], [-1, 'Down']].map(([d, label]) => ({ label, current: st.dirT === d,
+        onClick: (st, ui) => { st.dirT = d; if (riders().length) ui.flash('reversing once the riders are off'); else if (st.v > 0) ui.flash('stopping, then reversing'); } })) },
+  ],
+  params:(st, q) => {
+    if (FLOWS[q.get('flow')]) st.flow = q.get('flow');
+    if (q.get('dir') === 'down') st.dir = st.dirT = -1;
+    if (q.has('v')) st.v = +q.get('v');
+  },
+});
+ui.animate(step);
+</script>
+</body>
+</html>

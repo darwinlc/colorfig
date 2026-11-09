@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fishing</title>
+</head>
+<body>
+<script src="core.js"></script>
+<script>
+/* ---------- geometry (x = depth, y = width, z = up); about 1 unit = 5 cm ----------
+   A lake (the board) with a grassy bank at the back. A wooden dock runs out toward the viewer (+x);
+   the fisherman sits at its end facing +x, legs over the edge, and fishes to his right (smaller y). */
+const BD = [0, 0, 92, 74, 3, 6], WZ = BD[4];             // the water surface is the board top
+const DY = 40;                                            // dock centre line (y)
+const DOCK = [8, DY - 11, 60, DY + 11, 9, 11];           // x0,y0,x1,y1,z0,z1
+const BANK = [0, 0, 12, BD[3], WZ, 9];
+const HIP = [53, DY, 12.5];
+const TIP0 = [83, DY - 3, 40], TIP_BACK = [44, DY + 1, 47], TIP_REEL = [81, DY - 3, 33], TIP_HOLD = [75, DY - 4, 42];
+const HAND = [59.2, DY - .1, 16.4], ROD_BASE = [55.3, DY + .3, 14.4];
+const DOCK_END = [66, DY - 3];                            // where a hooked fish is pulled to
+const BUCKET = [47, DY + 8], RELEASE_AT = [78, DY + 22];
+const BITE_WINDOW = 2.6;
+
+const WATER = { l:'#6cb6dc', m:'#4f9cc6', d:'#2f6d92' };
+const GRASS = matOf('#8fc06a'), STRAW = matOf('#e8c97a'), PANTS = matOf('#3a5a7a'), SKIN = '#e9b98f';
+const SPECIES = [
+  { name:'Perch',   col:'#9cc43a', len:11, w:4.4, stripes:true },
+  { name:'Trout',   col:'#c9b07a', len:13, w:4.2, band:'#e58a9a', spots:true },
+  { name:'Bass',    col:'#6f8f4a', len:14, w:5.2, band:'#3f5a2a' },
+  { name:'Carp',    col:'#d9a24a', len:15, w:6,   scales:true },
+  { name:'Catfish', col:'#7b7468', len:16, w:4.6, whiskers:true },
+];
+const GOLDEN = { name:'Golden koi', col:'#f6c431', len:15, w:5.4, band:'#ff8a3c', rare:true };
+
+/* ---------- state ---------- */
+const st = { pal:'tomato', clock:0, line:'in', anim:null, bob:[84, DY - 18], biteAt:0, bite:null, held:null,
+             bucket:[], caught:0, rare:0, last:'—', swimmers:[], splashes:[], forceRare:false };
+
+/* ---------- helpers ---------- */
+const lerp3 = (a, b, u) => a.map((v, i) => v + (b[i] - v) * u);
+const rnd = (a, b) => a + Math.random()*(b - a);
+const starPath = (X, Y, r) => `M${f(X)} ${f(Y - r)}L${f(X + r*.25)} ${f(Y - r*.25)}L${f(X + r)} ${f(Y)}L${f(X + r*.25)} ${f(Y + r*.25)}L${f(X)} ${f(Y + r)}L${f(X - r*.25)} ${f(Y + r*.25)}L${f(X - r)} ${f(Y)}L${f(X - r*.25)} ${f(Y - r*.25)}Z`;
+
+/* ---------- fish: drawn in any plane through c with head direction e1 and side e2 ---------- */
+function fishSVG(sp, c, e1, e2, opts = {}){
+  const L = sp.len * (opts.k || 1), Wd = sp.w * (opts.k || 1), m = matOf(sp.col);
+  const Q = (u, v) => [c[0] + e1[0]*u + e2[0]*v, c[1] + e1[1]*u + e2[1]*v, c[2] + e1[2]*u + e2[2]*v];
+  const wig = opts.wiggle || 0;
+  const body = Array.from({ length: 24 }, (_, i) => { const a = i/24*2*Math.PI, u = L/2*Math.cos(a), v = Wd/2*Math.sin(a)*(u > 0 ? 1 : .85 + .15*(1 + u/(L/2)));
+    return Q(u, v + wig*(u < 0 ? (u/(L/2))**2 : 0)); });
+  const tb = -L/2 + 1, tail = [Q(tb, wig*.8), Q(-L/2 - L*.3, Wd*.48 + wig*1.6), Q(-L/2 - L*.22, wig*1.2), Q(-L/2 - L*.3, -Wd*.48 + wig*1.6)];
+  if (opts.shadow) return `<g opacity="${f(opts.shadow)}">${fill(pd(body) + pd(tail), '#1f4a63')}</g>`;
+  let s = shape(tail, m.m, .9) + fill(pd(body), m.l);
+  if (sp.band) s += fill(pd([Q(-L*.4, -.4), Q(L*.35, -.4), Q(L*.35, .5), Q(-L*.4, .5)]), sp.band, 'opacity=".8"');
+  if (sp.stripes) for (const u of [-.25, -.05, .15]) s += line([Q(u*L, -Wd*.45), Q(u*L, Wd*.4)], .9).replace(INK, '#3f5a1a');
+  if (sp.spots) for (const [u, v] of [[-.2, 1.2], [0, 1.4], [.15, -1], [-.05, -1.3]]) s += fill(pd([Q(u*L, v), Q(u*L + .6, v), Q(u*L + .6, v + .6), Q(u*L, v + .6)]), '#5a4630');
+  if (sp.scales) for (const u of [-.2, 0, .2]) s += line([Q(u*L, -Wd*.4), Q(u*L + 1.2, 0), Q(u*L, Wd*.4)], .6).replace(INK, m.d);
+  s += fill(pd([Q(-L*.05, Wd*.5 - .2), Q(L*.12, Wd*.5 + 1.2), Q(L*.2, Wd*.5 - .4)]), m.m);   // dorsal fin
+  s += ink(pd(body), 1);
+  const [ex, ey] = P(...Q(L*.32, Wd*.12));
+  s += `<circle cx="${f(ex)}" cy="${f(ey)}" r=".9" fill="#fff" stroke="${INK}" stroke-width=".5"/><circle cx="${f(ex)}" cy="${f(ey)}" r=".42" fill="${INK}"/>`;
+  if (sp.whiskers) s += line([Q(L/2 - .5, 0), Q(L/2 + 3, 1.6)], .6) + line([Q(L/2 - .5, -.4), Q(L/2 + 3, -1.8)], .6);
+  if (sp.rare){ const t = st.clock; for (let i = 0; i < 4; i++){ const a = t*1.7 + i*Math.PI/2, [X, Y] = P(...Q(Math.cos(a)*L*.7, Math.sin(a)*Wd*1.4));
+    s += fill(starPath(X, Y, 1.6 + .6*Math.sin(t*6 + i)), '#fff6b0') + ink(starPath(X, Y, 1.6 + .6*Math.sin(t*6 + i)), .5); } }
+  return s;
+}
+const flat = (h) => [[Math.cos(h), Math.sin(h), 0], [-Math.sin(h), Math.cos(h), 0]];   // swimming, seen from above
+
+/* ---------- the fisherman, the rod, the line ---------- */
+function rodTip(){
+  const a = st.anim;
+  if (a && a.kind === 'cast'){ const t = a.t;
+    if (t < .35) return lerp3(TIP0, TIP_BACK, ease(t/.35));
+    if (t < .6) return lerp3(TIP_BACK, TIP0, ease((t - .35)/.25));
+    return TIP0; }
+  if (a && a.kind === 'reel') return [TIP_REEL[0], TIP_REEL[1] + .6*Math.sin(st.clock*20), TIP_REEL[2] + .5*Math.sin(st.clock*13)];
+  if (a && a.kind === 'lift') return lerp3(TIP_REEL, TIP_HOLD, ease(a.t));
+  if (st.held) return TIP_HOLD;
+  return TIP0;
+}
+// the rod stays straight: handle (dark grip) and blank (red) are one line from the butt to the tip
+function rodSVG(tip){
+  const grip = lerp3(ROD_BASE, tip, .2);
+  let s = rod(ROD_BASE, grip, .62, DARK, toneI, .9, .5) + rod(grip, tip, .48, matOf('#c0392b'), toneI, .8, .22);
+  s += cylX(HAND[0] - 1.6, HAND[0] + .4, HAND[1] + 1.8, HAND[2] - 1.2, 1.5, METAL, toneI, .8, 14);   // reel
+  return s;
+}
+function fisherman(m){
+  const [hx, hy, hz] = HIP, jacket = m;
+  let s = '';
+  for (const dy of [-1.7, 1.7]){
+    s += rod([hx - 1, hy + dy, hz], [hx + 5.5, hy + dy, hz - .2], 1.7, PANTS, toneI, .9);
+    s += rod([hx + 5.5, hy + dy, hz - .2], [hx + 7, hy + dy, 6.6], 1.55, PANTS, toneI, .9);
+    s += box(hx + 6, hy + dy - 1.4, 5, hx + 9.4, hy + dy + 1.4, 7, DARK, toneI, .8);                      // boots
+  }
+  s += rod([hx - .5, hy, hz], [hx, hy, hz + 11], 3.7, jacket, toneI, 1.1, 3.1);
+  const [X, Y] = P(hx + .4, hy, hz + 15);
+  s += `<circle cx="${f(X)}" cy="${f(Y)}" r="3.3" fill="${SKIN}" stroke="${INK}" stroke-width=".9"/>`;
+  // straw hat
+  s += shape(on(PZ(hz + 17.2), ellUV(hx + .4, hy, 6.4, 6.4, 24)), STRAW.l, .9);
+  s += cyl(hx + .4, hy, hz + 17.2, hz + 20.2, 3.3, STRAW, toneI, .9, 20);
+  s += ink(pd(on(PZ(hz + 17.9), ellUV(hx + .4, hy, 3.35, 3.35, 20)).filter(p => p[0] + p[1] > hx + hy), false), 1.2).replace(INK, '#7a2e22');
+  // arms: the far one, then the rod, then the near one
+  // shoulder → elbow (bent forward and down) → hand on the grip, with a round elbow joint so the two parts meet
+  const arm = dy => { const sh = [hx + .3, hy + dy*1.15, hz + 9.6], el = [hx + 3.6, hy + dy*1.25, hz + 5.4], hd = [HAND[0] - .6, HAND[1] + dy*.36, HAND[2] + .2];
+    const [ex, ey] = P(...el);
+    return rod(sh, el, 1.2, jacket, toneI, .8) + `<circle cx="${f(ex)}" cy="${f(ey)}" r="1.25" fill="${toneI([0, Math.sign(dy), 0], jacket)}" stroke="${INK}" stroke-width=".7"/>` + rod(el, hd, 1.1, jacket, toneI, .8); };
+  s += arm(-2.8);
+  return { back: s, near: arm(2.8) + [-1, 1].map(d => { const [a, b] = P(HAND[0], HAND[1] + d, HAND[2]); return `<circle cx="${f(a)}" cy="${f(b)}" r="1.25" fill="${SKIN}" stroke="${INK}" stroke-width=".7"/>`; }).join('') };
+}
+function lineSVG(a, b, sag){
+  const pts = Array.from({ length: 13 }, (_, i) => { const u = i/12, p = lerp3(a, b, u); p[2] -= sag*4*u*(1 - u); return p; });
+  return `<path d="${pd(pts, false)}" fill="none" stroke="${INK}" stroke-width=".55" stroke-linecap="round"/>`;
+}
+function bobberSVG(p){
+  const [X, Y] = P(...p);
+  return `<circle cx="${f(X)}" cy="${f(Y)}" r="2" fill="#fbf7ea" stroke="${INK}" stroke-width=".8"/>`
+    + `<path d="M${f(X - 2)} ${f(Y)}A2 2 0 0 1 ${f(X + 2)} ${f(Y)}Z" fill="#e2483d" stroke="${INK}" stroke-width=".8"/>`
+    + `<path d="M${f(X)} ${f(Y - 2)}L${f(X)} ${f(Y - 3.6)}" stroke="${INK}" stroke-width=".8"/>`;
+}
+const ring = (c, r, op, col = '#e8f6ff') => `<path d="${pd(on(PZ(WZ + .05), ellUV(c[0], c[1], r, r, 28)))}" fill="none" stroke="${col}" stroke-width="1" opacity="${f(op)}"/>`;
+function pill(p, text, dy = -14){
+  const [X, Y] = P(...p), fs = 4.4, w = text.length*fs*.62 + fs*1.6, h = fs*1.9, cy = Y + dy;
+  return `<path d="M${f(X)} ${f(Y - 4)}L${f(X)} ${f(cy + h/2)}" stroke="${INK}" stroke-width=".8"/>`
+    + `<rect x="${f(X - w/2)}" y="${f(cy - h/2)}" width="${f(w)}" height="${f(h)}" rx="${f(h/2)}" fill="#f2b431" stroke="${INK}" stroke-width="1.1"/>`
+    + `<text x="${f(X)}" y="${f(cy + fs*.36)}" font-size="${fs}" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-weight="800" fill="${INK}">${text}</text>`;
+}
+
+/* ---------- dock, bank, bucket ---------- */
+function dockSVG(){
+  const [x0, y0, x1, y1, z0, z1] = DOCK;
+  let s = '';
+  const posts = [];
+  for (const x of [16, 31, 46, x1 - 2.5]) for (const y of [y0 + 2, y1 - 2]) posts.push({ at: [x, y, 5], svg: cyl(x, y, WZ, z0, 1.6, WOOD, toneI, .9, 14) });
+  s += byDepth(posts);
+  s += box(x0, y0, z0, x1, y1, z1, WOOD, tone, 1.3);
+  let pl = ''; for (let x = x0 + 4.5; x < x1; x += 4.5) pl += pd([[x, y0 + .3, z1 + .05], [x, y1 - .3, z1 + .05]], false);
+  s += `<path d="${pl}" fill="none" stroke="${WOOD.d}" stroke-width=".7"/>`;
+  return s;
+}
+function bucketSVG(){
+  const [bx, by] = BUCKET, z0 = DOCK[5], z1 = z0 + 8;
+  let s = cyl(bx, by, z0, z1, 4.4, matOf('#7aa6c9'), toneI, 1.2, 22);
+  s += fill(pd(on(PZ(z1 - .8), ellUV(bx, by, 3.7, 3.7, 20))), WATER.m);
+  // tails of the fish inside poke out of the water
+  st.bucket.slice(-4).forEach((sp, i) => {
+    const c = [bx - .5 + (i % 2)*1.4, by - 1.6 + i*1.2, z1 + 1.2], m = matOf(sp.col);
+    s += shape([[c[0], c[1], c[2] - 2], [c[0], c[1] - 1.8, c[2] + 1.6], [c[0], c[1], c[2] + .6], [c[0], c[1] + 1.8, c[2] + 1.6]], m.l, .7);
+  });
+  s += rod([bx, by - 4.4, z1 - .5], [bx, by + 4.4, z1 - .5], .25, METAL, toneI, .5);   // handle, folded down
+  return s;
+}
+
+/* ---------- scene ---------- */
+function scene(st, m){
+  const top = boardTop(...BD);
+  let s = board(...BD, WATER);
+  // ripples on the lake
+  let rp = '';
+  for (const [x, y, r] of [[30, 12, 6], [80, 62, 6], [26, 64, 5], [84, 10, 5]]) rp += pd(on(PZ(WZ + .05), arcUV(x, y, r, 200, 300, 8)), false);
+  s += `<path d="${rp}" fill="none" stroke="#d6efff" stroke-width=".9" opacity=".7"/>`;
+  // shadows on the water
+  const [x0, y0, x1, y1, z0, z1] = DOCK;
+  let sh = castShadow([[x0, y0, WZ], [x1, y0, WZ], [x1, y1, WZ], [x0, y1, WZ], [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], WZ);
+  s += clipTo(top, `<g opacity=".55">${sh}</g>`);
+  s += box(...BANK.slice(0, 2), BANK[4], BANK[2], BANK[3], BANK[5], GRASS, tone, 1.3);
+  for (const [x, y, h] of [[13, 10, 14], [15, 13, 11], [14, 64, 13], [16, 61, 10]]) s += rod([x, y, WZ], [x + 1.5, y + .5, WZ + h], .35, matOf('#5f8a3a'), toneI, .6) + rod([x + 1.5, y + .5, WZ + h - 4], [x + 1.6, y + .5, WZ + h], .8, matOf('#7a5a3c'), toneI, .6);
+
+  // fish under the surface (the one nibbling, the ones swimming away)
+  for (const w of st.swimmers){ const [e1, e2] = flat(w.h); s += fishSVG(w.sp, w.p, e1, e2, { shadow: .45*Math.max(0, 1 - w.t/2), wiggle: Math.sin(st.clock*14) }); }
+  if (st.bite && st.line === 'out'){ const a = st.clock*2.4, c = [st.bob[0] + 4*Math.cos(a), st.bob[1] + 4*Math.sin(a), WZ - .3]; const [e1, e2] = flat(a + Math.PI/2);
+    s += fishSVG(st.bite.sp, c, e1, e2, { shadow: .5, wiggle: Math.sin(st.clock*16) }); }
+
+  s += dockSVG();
+  const tip = rodTip(), fm = fisherman(m), a = st.anim;
+  s += fm.back + rodSVG(tip) + fm.near + bucketSVG();
+
+  // splashes
+  for (const sp of st.splashes){ const u = sp.t / .9;
+    s += ring(sp.p, 2 + u*9, 1 - u) + ring(sp.p, 1 + u*5, (1 - u)*.8);
+    for (let i = 0; i < 6; i++){ const ang = i/6*2*Math.PI, d = 1 + u*6, [X, Y] = P(sp.p[0] + d*Math.cos(ang), sp.p[1] + d*Math.sin(ang), WZ + 6*u*(1 - u)*2);
+      s += `<circle cx="${f(X)}" cy="${f(Y)}" r=".8" fill="#e8f6ff" stroke="${INK}" stroke-width=".4" opacity="${f(1 - u)}"/>`; } }
+
+  // line + whatever is on the end of it
+  if (st.line === 'in' && !st.held && !(a && (a.kind === 'lift' || a.kind === 'reel' || a.kind === 'cast' || a.kind === 'toBucket' || a.kind === 'toss'))){
+    const end = [tip[0], tip[1], tip[2] - 7];
+    s += lineSVG(tip, end, 0) + bobberSVG(end);
+  } else if (a && a.kind === 'cast'){
+    if (a.t > .45){ const u = (a.t - .45)/.55, from = [TIP0[0], TIP0[1], TIP0[2] - 2], to = [st.bob[0], st.bob[1], WZ + 1];
+      const p = lerp3(from, to, u); p[2] += 16*u*(1 - u);
+      s += lineSVG(tip, p, 2*u) + bobberSVG(p);
+    } else { const end = [tip[0], tip[1], tip[2] - 7]; s += lineSVG(tip, end, 0) + bobberSVG(end); }
+  } else if (st.line === 'out'){
+    const biting = !!st.bite, dip = biting ? (Math.sin(st.clock*11) > .2 ? 1.6 : 0) : 0;
+    const b = [st.bob[0], st.bob[1], WZ + 1 + .3*Math.sin(st.clock*2.2) - dip];
+    s += ring(st.bob, 3 + (st.clock*2 % 3), .6*(1 - (st.clock*2 % 3)/3));
+    if (biting) s += ring(st.bob, 2 + (st.clock*6 % 6), 1 - (st.clock*6 % 6)/6, '#ffffff');
+    s += lineSVG(tip, b, biting ? .6 : 3) + bobberSVG(b);
+    if (biting) s += pill([b[0], b[1], b[2] + 2], 'FISH ON!');
+  } else if (a && a.kind === 'reel'){
+    const u = ease(a.t), p = [st.bob[0] + (DOCK_END[0] - st.bob[0])*u, st.bob[1] + (DOCK_END[1] - st.bob[1])*u, WZ + .4];
+    if (a.empty){ const end = lerp3([st.bob[0], st.bob[1], WZ + 1], [tip[0], tip[1], tip[2] - 7], u); s += lineSVG(tip, end, .4) + bobberSVG(end); }
+    else {
+      const h = Math.atan2(st.bob[1] - DOCK_END[1], st.bob[0] - DOCK_END[0]) + .5*Math.sin(st.clock*18), [e1, e2] = flat(h);
+      s += fishSVG(a.sp, p, e1, e2, { wiggle: 1.4*Math.sin(st.clock*22), k: .9 });
+      s += ring(p, 3 + (st.clock*8 % 4), .9) + lineSVG(tip, p, .2);
+    }
+  }
+  // a fish held up on the line (or being lifted)
+  const held = st.held || (a && a.kind === 'lift' ? a.sp : null);
+  if (held && !(a && a.kind === 'toBucket')){
+    const sw = .25*Math.sin(st.clock*5), mouth = [tip[0], tip[1], tip[2] - 7];
+    const e1 = [0, -Math.sin(sw), Math.cos(sw)], e2 = [0, Math.cos(sw), Math.sin(sw)];
+    const c = [mouth[0], mouth[1] + Math.sin(sw)*held.len/2, mouth[2] - Math.cos(sw)*held.len/2];
+    s += lineSVG(tip, mouth, 0) + fishSVG(held, c, e1, e2, { wiggle: .8*Math.sin(st.clock*9) });
+  }
+  // fish flying (into the bucket or back into the lake)
+  if (a && (a.kind === 'toBucket' || a.kind === 'toss')){
+    const u = ease(a.t), p = lerp3(a.from, a.to, u); p[2] += a.arc*4*u*(1 - u);
+    const ang = a.t*5, e1 = [Math.cos(ang)*.3, -Math.sin(ang), Math.cos(ang)], e2 = [0, Math.cos(ang), Math.sin(ang)];
+    s += fishSVG(a.sp, p, norm(e1), e2, {});
+    if (a.kind === 'toBucket' || (a.kind === 'toss' && st.line === 'in')) s += lineSVG(tip, [tip[0], tip[1], tip[2] - 7], 0) + bobberSVG([tip[0], tip[1], tip[2] - 7]);
+  }
+  return s;
+}
+
+/* ---------- behaviour ---------- */
+let ui;
+const newBiteTime = () => st.clock + rnd(2.5, 6);
+function pickSpecies(){ if (st.forceRare || Math.random() < .01){ st.forceRare = false; return GOLDEN; } return SPECIES[Math.floor(Math.random()*SPECIES.length)]; }
+function splash(p){ st.splashes.push({ p: [p[0], p[1]], t: 0 }); }
+function swimAway(sp, from){ const h = Math.atan2(from[1] - DY, from[0] - 46); st.swimmers.push({ sp, p: [from[0], from[1], WZ - .3], h, t: 0 }); }
+function step(dt){
+  st.clock += dt;
+  const a = st.anim;
+  if (a){
+    a.t = Math.min(1, a.t + dt / a.dur);
+    if (a.t >= 1){ st.anim = null; a.done && a.done(); }
+  }
+  if (st.line === 'out' && !st.anim){
+    if (!st.bite && st.clock >= st.biteAt){ st.bite = { sp: pickSpecies(), until: st.clock + BITE_WINDOW }; ui.flash('A fish is on the hook!', BITE_WINDOW*1000); }
+    else if (st.bite && st.clock > st.bite.until){ swimAway(st.bite.sp, st.bob); st.bite = null; st.biteAt = newBiteTime(); ui.flash('Too slow — it swam away.'); }
+  }
+  for (const w of st.swimmers){ w.t += dt; w.p[0] += Math.cos(w.h)*14*dt; w.p[1] += Math.sin(w.h)*14*dt; }
+  st.swimmers = st.swimmers.filter(w => w.t < 2);
+  for (const sp of st.splashes) sp.t += dt; st.splashes = st.splashes.filter(sp => sp.t < .9);
+  return true;
+}
+function keepHeld(then){
+  const sp = st.held; st.held = null;
+  const tip = rodTip();
+  st.anim = { kind:'toBucket', t:0, dur:.6, sp, from:[tip[0], tip[1], tip[2] - 7 - sp.len/2], to:[BUCKET[0], BUCKET[1], DOCK[5] + 8], arc:8,
+    done: () => { st.bucket.push(sp); if (then) then(); } };
+}
+function cast(){
+  if (st.anim) return ui.flash('one moment…');
+  if (st.line === 'out') return ui.flash('the line is already in the water — reel it in first');
+  const go = () => {
+    st.bob = [rnd(77, 88), rnd(DY - 28, DY - 12)];
+    st.anim = { kind:'cast', t:0, dur:1.3, done: () => { st.line = 'out'; st.bite = null; st.biteAt = newBiteTime(); splash(st.bob); } };
+  };
+  if (st.held){ ui.flash(`${st.held.name} goes in the bucket`); keepHeld(go); } else go();
+}
+function reel(){
+  if (st.anim) return ui.flash(st.anim.kind === 'reel' ? 'reeling…' : 'one moment…');
+  if (st.held) return ui.flash(`you are holding a ${st.held.name.toLowerCase()} — cast to keep it, or release it`);
+  if (st.line !== 'out') return ui.flash('cast the line first');
+  if (st.bite){
+    const sp = st.bite.sp; st.bite = null; st.line = 'in';
+    ui.flash('Reeling it in!', 1600);
+    st.anim = { kind:'reel', t:0, dur:1.6, sp, done: () => {
+      splash(DOCK_END);
+      st.anim = { kind:'lift', t:0, dur:.5, sp, done: () => {
+        st.held = sp; st.caught++; st.last = sp.name; if (sp.rare) st.rare++;
+        ui.flash(sp.rare ? 'WOW! A rare golden koi — one in a hundred!' : `Caught a ${sp.name.toLowerCase()}!`, sp.rare ? 3500 : 1800);
+      } };
+    } };
+  } else {
+    st.line = 'in';
+    ui.flash('nothing on the hook yet — reeling in an empty line');
+    st.anim = { kind:'reel', t:0, dur:.9, empty:true };
+  }
+}
+function release(){
+  if (st.anim) return ui.flash('one moment…');
+  let sp, from;
+  const tip = rodTip();
+  if (st.held){ sp = st.held; st.held = null; from = [tip[0], tip[1], tip[2] - 7 - sp.len/2]; }
+  else if (st.bucket.length){ sp = st.bucket.pop(); from = [BUCKET[0], BUCKET[1], DOCK[5] + 9]; }
+  else return ui.flash('no fish to release');
+  const to = [RELEASE_AT[0] + rnd(-4, 4), RELEASE_AT[1] + rnd(-3, 3), WZ];
+  st.anim = { kind:'toss', t:0, dur:.7, sp, from, to, arc:10, done: () => { splash(to); swimAway(sp, to); st.swimmers[st.swimmers.length - 1].h = rnd(-.6, .6) + Math.PI*.3; ui.flash(`the ${sp.name.toLowerCase()} swims off`); } };
+}
+
+ui = mountFigure({
+  fig:'11', title:'Fishing', hint:'cast, wait for a bite, reel it in before it gets away',
+  size:[BD[2], BD[3], 50], palette:'tomato', state:st,
+  scene,
+  readout: st => st.line,
+  stats: st => [
+    { label:'Fish caught', value: String(st.caught) },
+    { label:'In the bucket', value: String(st.bucket.length), small:true },
+    { label:'Last catch', value: st.last, small:true },
+    st.rare > 0 && { label:'Rare finds', value: String(st.rare), small:true },
+  ],
+  buttonsLabel:'Fishing',
+  buttons:[
+    { label:'Cast line', onClick: () => cast() },
+    { label:'Reel line', onClick: () => reel() },
+    { label:'Release fish', onClick: () => release() },
+  ],
+  params:(st, q) => {
+    if (q.get('rare') === '1') st.forceRare = true;
+    if (q.has('bite')) { st.line = 'out'; st.biteAt = +q.get('bite'); }
+    if (q.get('held')){ const sp = q.get('held') === 'golden' ? GOLDEN : SPECIES.find(s => s.name.toLowerCase() === q.get('held')) || SPECIES[0]; st.held = sp; }
+    if (q.has('bucket')) for (let i = 0; i < +q.get('bucket'); i++) st.bucket.push(SPECIES[i % SPECIES.length]);
+  },
+});
+ui.animate(step);
+</script>
+</body>
+</html>
