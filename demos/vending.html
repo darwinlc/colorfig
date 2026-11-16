@@ -600,10 +600,12 @@ function orangePart(c, r, axis=0, side=1, sq=1){
 
 /* ---------- state ---------- */
 const st = { pal:'tomato', palOf:{ can:'tomato', juice:'mint' }, mode:'can', sel:null, credit:0, msg:'',
-  card:null, coin:null, beep:0, drop:null, job:null, ready:null,
+  card:null, coin:null, beep:0, drop:null, job:null, ready:null, refill:null,
   oranges:24, peels:0, stock: ROWS.map(() => COL_Y.map(() => 3)) };
 
-const busy = () => !!(st.drop || st.job || st.card || st.coin);
+const busy = () => !!(st.drop || st.job || st.card || st.coin || st.refill);
+const MAX_CANS = 3, MAX_ORANGES = 24;
+const cansLeft = () => st.stock.flat().reduce((a, b) => a + b, 0);
 const price = () => st.mode === 'juice' ? PRICE.juice : st.sel ? PRICE.can : 0;
 const selCode = () => st.sel ? ROWS[st.sel.r].code + (st.sel.c+1) : '';
 
@@ -646,12 +648,12 @@ function juiceState(){
 /* ---------- juice mechanism (drawn inside the juice window clip) ---------- */
 const HOP = []; for (const z of [141,150,159]) for (const x of [60,67]) for (const y of [14,22,30,38]) HOP.push([x,y+DY,z]);
 const HY0 = 9+DY, HY1 = 43+DY;
-function hopper(count){
+function hopper(count, falling = []){
   let s = '';
   s += shape(on(PX(56), rectUV(HY0,136,HY1,170)), '#dbe9ea', .8);                          // back wall
   s += face(pd([[56,HY0,136],[72,HY0,136],[72,HY1,136],[56,HY1,136]]), '#cbdcdf');       // floor
   s += face(pd([[56,HY0,136],[72,HY0,136],[72,HY0,170],[56,HY0,170]]), '#d3e3e5');       // right-hand wall
-  const shown = HOP.slice(0, Math.max(0, count)).sort((a,b)=>depthOf(a)-depthOf(b));
+  const shown = HOP.slice(0, Math.max(0, count)).concat(falling).sort((a,b)=>depthOf(a)-depthOf(b));
   for (const o of shown) s += orangePart(o, 4.3);
   s += `<g pointer-events="none">${fill(pd(on(PX(72), rectUV(HY0,136,HY1,170))), '#cfe9f0', 'opacity=".25"')}`
      + fill(pd(on(PX(72.1), [[HY0+5,138],[HY0+9,138],[HY0+21,168],[HY0+17,168]])), '#ffffff', 'opacity=".35"') + '</g>';
@@ -672,7 +674,7 @@ function peelBin(i, pile, flying){
 }
 function juiceMech(J){
   let s = '';
-  s += hopper(st.oranges - J.taken);
+  s += hopper(st.oranges - J.taken, refillMoving('juice').map(({ it, k }) => { const h = HOP[it.slot]; return [h[0], h[1], h[2] + 30*(1 - k*k)]; }));
   // housings + piston rods
   for (const i of [0,1]) s += box(MX-5, CUPY[i]-4, 124, MX+5, CUPY[i]+4, 132, METAL, toneI, .9) + rod([MX,CUPY[i],124],[MX,CUPY[i],J.heads[i]+4], .9, METAL);
   if (J.whole && J.whole[2] > 113) s += orangePart(J.whole, OR_R);   // still coming out of the chute
@@ -721,6 +723,7 @@ function juiceCup(x, y, z0, lvl, flow){
 /* ---------- control column (shared by both machines) ---------- */
 function screenLines(J){
   if (st.msg) return st.msg.split('|');
+  if (st.refill) return ['SERVICE', 'REFILLING'];
   if (st.drop) return ['VENDING', selCode()];
   if (st.job) return J.n < 0 ? ['IJOOZ', 'CUP DOWN'] : ['SQUEEZING', `ORANGE ${J.n+1}/4`];
   if (st.ready) return ['PLEASE', 'TAKE DRINK'];
@@ -813,6 +816,7 @@ function canMachine(m){
     it += shape([[T,T,z],[SHELF_X,T,z],[SHELF_X,D-T,z],[T,D-T,z]], '#cfd6d8', 0);
     const items = [];
     COL_Y.forEach((y,c) => { for (let k = st.stock[r][c]-1; k >= 0; k--) items.push({ x:ITEM_X-k*ITEM_STEP, y, c }); });
+    for (const { it, k } of refillMoving('can')) if (it.r === r){ const x1 = ITEM_X - it.slot*ITEM_STEP; items.push({ x: lerp(T + 4, x1, ease(k)), y: COL_Y[it.c], c: it.c }); }
     items.sort((a,b) => depthOf([a.x,a.y,0]) - depthOf([b.x,b.y,0]));
     for (const o of items) it += act('item', can(o.x,o.y,z,row.cols[o.c]), `data-r="${r}" data-c="${o.c}"`);
     it += shape([[SHELF_X,T,z-3],[SHELF_X,D-T,z-3],[SHELF_X,D-T,z],[SHELF_X,T,z]], '#a9b1b4', 1);
@@ -901,11 +905,42 @@ function tick(dt){
   if (st.beep > 0) st.beep = Math.max(0, st.beep - dt);
   if (st.coin){ st.coin.t += dt; if (st.coin.t >= .6){ st.coin = null; st.credit += 1; if (st.credit >= price() - 1e-9){ st.credit -= price(); start(); } } }
   if (st.drop){ st.drop.t += dt/1.1; if (st.drop.t >= 1){ const { r, c } = st.drop; st.ready = { kind:'can', col:ROWS[r].cols[c] }; st.drop = null; } }
+  if (st.refill){ const R = st.refill; R.t += dt;
+    for (const it of R.items) if (!it.done && R.t >= it.at + REFILL_T){ it.done = true; if (R.kind === 'can') st.stock[it.r][it.c]++; else st.oranges++; }
+    if (R.items.every(it => it.done)){ st.refill = null; screen('SERVICE|ALL FULL', 1300); } }
   if (st.job && !st.job.frozen){ st.job.t += dt; if (st.job.t >= JOB_T){ st.job = null; st.oranges -= 4; st.peels += 8; st.ready = { kind:'cup' }; } }
   return busy() || st.beep > 0;
 }
 function kick(){ if (running) return; running = true; ui.animate(dt => { const more = tick(dt); if (!more) running = false; return more; }); }
 function screen(text, ms=1400){ st.msg = text; clearTimeout(msgTimer); msgTimer = setTimeout(() => { st.msg = ''; ui.render(); }, ms); }
+
+/* ---------- refill: the service person tops the machine up ----------
+   Cans: a fresh can goes into every empty place, slid in from the back of its shelf (where the loader stands),
+   front places first. Juice: fresh oranges drop into the hopper through its hatch, one at a time, and the two peel
+   bins are emptied. Nothing can be bought while it runs. */
+const REFILL_T = .55;
+function refillMoving(kind){
+  const R = st.refill; if (!R || R.kind !== kind) return [];
+  return R.items.filter(it => !it.done && R.t >= it.at).map(it => ({ it, k: clamp01((R.t - it.at) / REFILL_T) }));
+}
+function refill(ui){
+  if (st.refill) return ui.flash('already refilling');
+  if (busy()) return ui.flash('wait until this drink is done');
+  const items = [];
+  if (st.mode === 'can'){
+    ROWS.forEach((_, r) => COL_Y.forEach((_, c) => { for (let k = st.stock[r][c]; k < MAX_CANS; k++) items.push({ r, c, slot:k }); }));
+    items.sort((a, b) => a.slot - b.slot || a.r - b.r || a.c - b.c);
+  } else {
+    for (let k = st.oranges; k < MAX_ORANGES; k++) items.push({ slot:k });
+  }
+  const peels = st.mode === 'juice' && st.peels > 0;
+  if (!items.length && !peels) return ui.flash(st.mode === 'can' ? 'every can is already in stock' : 'the hopper is already full');
+  if (peels){ st.peels = 0; ui.flash('peel bins emptied'); }
+  if (!items.length) return;
+  items.forEach((it, i) => { it.at = i * (st.mode === 'can' ? .09 : .11); });
+  st.refill = { kind: st.mode, t:0, items }; st.sel = st.sel && st.stock[st.sel.r][st.sel.c] ? st.sel : null;
+  kick();
+}
 
 function start(){
   if (st.mode === 'can'){ const { r, c } = st.sel; st.stock[r][c]--; st.drop = { r, c, t:0 }; }
@@ -914,6 +949,7 @@ function start(){
 }
 // why a payment can't start right now (or null if it can)
 function payBlock(){
+  if (st.refill) return 'wait — the machine is being refilled';
   if (st.drop || st.job) return 'wait — your drink is being made';
   if (st.card || st.coin) return 'one moment — reading your payment';
   if (st.ready) return 'take your drink first';
@@ -924,7 +960,7 @@ function payBlock(){
 }
 function tapCard(ui){ const why = payBlock(); if (why){ ui.flash(why); return; } st.card = { t:0 }; kick(); }
 function insertCoin(ui){ const why = payBlock(); if (why){ ui.flash(why); return; } st.coin = { t:0 }; kick(); }
-const modeBlock = () => busy() ? 'wait — your drink is being made' : st.ready ? 'take your drink first' : null;
+const modeBlock = () => st.refill ? 'wait — the machine is being refilled' : busy() ? 'wait — your drink is being made' : st.ready ? 'take your drink first' : null;
 function setMode(k, ui){
   if (st.mode === k) return;
   const why = modeBlock(); if (why) return ui.flash(why);
@@ -940,6 +976,7 @@ function syncButtons(){
 }
 function pickCan(r, c, ui){
   if (st.mode !== 'can'){ const why = modeBlock(); if (why) return ui.flash(why); setMode('can', ui); }
+  if (st.refill) return ui.flash('wait — the machine is being refilled');
   if (busy()) return ui.flash('wait — your drink is being made');
   if (st.ready) return ui.flash('take your drink first');
   if (!st.stock[r][c]) return ui.flash(ROWS[r].code + (c+1) + ' is sold out');
@@ -959,7 +996,8 @@ ui = mountFigure({
   scene,
   readout: st => st.job ? 'Squeezing oranges…' : st.ready ? 'Take your drink' : 'Pick a mode',
   stats: st => [ { label:'Price', value: price() ? money(price()) : '—' }, { label:'Paid', value: money(st.credit), small:true },
-                 st.mode === 'juice' && { label:'Oranges left', value: String(st.oranges - juiceState().taken), small:true } ],
+                 st.mode === 'juice' ? { label:'Oranges left', value: String(st.oranges - juiceState().taken), small:true }
+                                     : { label:'Cans left', value: `${cansLeft()}/${ROWS.length*COL_Y.length*MAX_CANS}`, small:true } ],
   buttonsLabel:'Vending',
   buttons:[
     { label:'Mode', choices: st => [
@@ -973,6 +1011,7 @@ ui = mountFigure({
     { label:'Tap credit card', onClick: (st,ui) => tapCard(ui) },
     { label:'Insert $1 coin', onClick: (st,ui) => insertCoin(ui) },
     { label:'Take drink', onClick: (st,ui) => takeDrink(ui) },
+    { label:'Refill machine', onClick: (st,ui) => refill(ui) },
   ],
   acts:{
     item: (st,el,ui) => pickCan(+el.dataset.r, +el.dataset.c, ui),
@@ -990,6 +1029,8 @@ ui = mountFigure({
     if (q.get('ready') === 'cup'){ st.mode = 'juice'; st.pal = st.palOf.juice; st.ready = { kind:'cup' }; }
     if (q.get('ready') === 'can') st.ready = { kind:'can', col:'#e2473a' };
     if (q.has('peels')) st.peels = +q.get('peels');
+    if (q.has('stock')) st.stock = ROWS.map(() => COL_Y.map(() => Math.max(0, Math.min(MAX_CANS, +q.get('stock')))));
+    if (q.has('oranges')) st.oranges = Math.max(0, Math.min(MAX_ORANGES, +q.get('oranges')));
   },
 });
 syncButtons();

@@ -747,20 +747,23 @@ const SPAWN_U = [196, 160], EXIT_U = [-CL - 14, -88];                 // where e
 const cars = [ [0, 24, '#3e86d9'], [0, 98, '#8b62d1'], [0, 172, '#22a58a'], [1, 30, '#e2473a'], [1, 100, '#f08a2b'], [1, 160, '#38a565'] ]
   .map(([lane, u, col]) => ({ lane, u, col, v:VMAX, go:false, brake:false }));
 const SKIN = ['#f1c7a1', '#c98f62', '#8a5a3c', '#f3d2b4'], SHIRT = ['#ef6f9a', '#4a9be0', '#f08a3c', '#38a565', '#8c4bd1', '#f2c230'];
-// where people wait, a step back from the kerb: side 0 on the sidewalk (beside the WAIT box, its face at x 79),
-// side 1 on the far kerb; and the path each side walks along to get there
-const HOME = [[[53,42],[62.5,45],[71,40.5]], [[78,138],[68,135.5],[58.5,139]]];
+// where people wait: a small crowd of 3 rows x 5 on each kerb, front row nearest the road. Side 0 on the sidewalk
+// (beside the WAIT box, its face at x 79), side 1 on the far kerb (clear of its pole); and the path each side walks along
+const CROWD_X = [[52, 58, 64, 70, 76], [80, 74, 68, 62, 56]], CROWD_Y = [[45, 40.5, 36], [Y1 + 5, Y1 + 9.5, Y1 + 14]];
+const HOME = [0, 1].map(sd => CROWD_Y[sd].flatMap(y => CROWD_X[sd].map((x, i) => [x + (i % 2 ? .8 : -.8), y])));
+const IMPATIENT = 10;                                          // with Auto press off, someone presses once more than this wait on one side
 const WALKWAY = [30, Y1 + 17];
 let people = [], seq = 0;
 const waiting = () => people.filter(p => p.state === 'wait');
+const waitingOn = side => people.filter(p => p.state === 'wait' && p.side === side).length;
 const pick = a => a[Math.floor(Math.random() * a.length)];
 
 // someone walks up to a random side of the crossing (the other side if that one is full); false when both are full
 const spawn = () => { const s = Math.random() < .5 ? 0 : 1; return spawnOn(s) || spawnOn(1 - s); };
 function spawnOn(side){
   const used = people.filter(p => p.side === side && (p.state === 'come' || p.state === 'wait')).map(p => p.spot);
-  const free = [0, 1, 2].filter(i => !used.includes(i)); if (!free.length) return false;
-  const spot = pick(free), [hx, hy] = HOME[side][spot], wy = WALKWAY[side], fromL = Math.random() < .5, k = seq++;
+  const free = HOME[side].map((_, i) => i).filter(i => !used.includes(i)); if (!free.length) return false;
+  const row = Math.floor(Math.min(...free) / 5), spot = pick(free.filter(i => Math.floor(i / 5) === row)), [hx, hy] = HOME[side][spot], wy = WALKWAY[side], fromL = Math.random() < .5, k = seq++;
   people.push({ side, spot, state:'come', x: fromL ? -14 : RX + 14, y: wy, col: SHIRT[k % SHIRT.length], skin: pick(SKIN),
     path: [[hx, wy], [hx, hy]], spd: 18 + Math.random()*6, dist: 0, walking: false, dir: [fromL ? 1 : -1, 0], gone: false });
   return true;
@@ -771,11 +774,17 @@ function walkOver(p){
   p.state = 'cross'; p.spd = 21 + Math.random()*3;
   p.path = [[p.x, ty], [p.x, WALKWAY[to]], [ex, WALKWAY[to]]];
 }
-// a person reaches the kerb: cross on a steady green man, otherwise push the button and wait
+// a person reaches the kerb: cross on a steady green man; otherwise wait, and push the button if Auto press is on
+// (or, with it off, once the crowd on this side has grown past IMPATIENT)
 function arrive(st, p){
   p.state = 'wait'; p.dir = [0, p.side ? -1 : 1];
   if (st.walkOK) return walkOver(p);
-  st.pressT[p.side] = performance.now(); beep(700, 50);
+  if (st.wait) return;                                           // already pressed: the green man is on its way
+  if (st.autoPress) return personPress(st, p.side);
+  if (waitingOn(p.side) > IMPATIENT){ ui.flash(`${waitingOn(p.side)} people waiting: someone pressed WAIT`); personPress(st, p.side); }
+}
+function personPress(st, side){
+  st.pressT[side] = performance.now(); beep(700, 50);
   if (!st.busy) startCycle(st); else st.wait = true;
 }
 
@@ -839,14 +848,14 @@ function startCycle(st){
   after(1200, () => { st.car = 'a'; });                          // amber: slow down
   after(4200, () => { st.car = 'r'; });                          // red: stop at the line
   after(5900, () => { st.man = 'g'; st.wait = false; st.walkOK = true;   // green man: everyone waiting walks
-    waiting().forEach((p, i) => after(i * 280, () => { if (p.state === 'wait') walkOver(p); })); });
+    waiting().forEach((p, i) => after(Math.min(i * 160, 2600), () => { if (p.state === 'wait') walkOver(p); })); });
   for (let b = 0; b < 9; b++) after(5900 + b * 560, () => beep(b % 2 ? 1050 : 1250));
   for (let b = 0; b < 10; b++) after(10900 + b * 260, () => { st.walkOK = false; st.blinkOn = b % 2 === 1; if (st.blinkOn) beep(1250, 40); });   // hurry: too late to start now
   after(13500, () => { st.man = 'r'; st.blinkOn = true; });      // red man
   after(14600, () => { st.car = 'ra'; });                         // red + amber: get ready
   after(15700, () => { st.car = 'g'; });                          // green: go
-  after(15700 + MIN_GREEN, () => { st.busy = false;               // anyone who came during the turn has pushed already: go again
-    if (waiting().length) startCycle(st); else st.wait = false; });
+  after(15700 + MIN_GREEN, () => { st.busy = false;               // someone pressed during the turn: go again
+    if (st.wait && waiting().length) startCycle(st); else st.wait = false; });
 }
 // the WAIT button by hand: it only matters when someone is there to cross
 function userPress(st, side = 0){
@@ -857,6 +866,12 @@ function userPress(st, side = 0){
   if (st.walkOK) return ui.flash('The green man is on: walk!');
   if (st.busy){ st.wait = true; return ui.flash('Already pressed: the green man is coming'); }
   startCycle(st);
+}
+function toggleAutoPress(st){
+  st.autoPress = !st.autoPress;
+  const b = [...document.querySelectorAll('.act')].find(x => /^Auto press/.test(x.textContent));
+  if (b) b.textContent = `Auto press: ${st.autoPress ? 'on' : 'off'}`;
+  if (st.autoPress && !st.wait && !st.walkOK){ const sd = waitingOn(0) >= waitingOn(1) ? 0 : 1; if (waitingOn(sd)) personPress(st, sd); }
 }
 function toggleRandom(st){
   st.random = !st.random; if (st.random) st.nextT = Math.min(st.nextT, 1.5);
@@ -962,20 +977,22 @@ function scene(st, m){
 }
 
 const ui = mountFigure({
-  fig:'08', turn:'full', title:'Traffic light', hint:'People turn up at random and press WAIT',
-  idea:'Red means stop, amber means slow down, green means go. The lights only stop the cars when someone is waiting to cross, and the green walking man means it is safe.',
+  fig:'08', turn:'full', title:'Traffic light', hint:'People turn up at random; press WAIT for them',
+  idea:'Red means stop, amber means slow down, green means go. The lights only stop the cars when someone presses WAIT, and the green walking man means it is safe.',
   size:[RX, Y1 + KERB, 108], palette:'mustard',
-  state:{ car:'g', man:'r', blinkOn:true, pressT:[-1e9, -1e9], wait:false, busy:false, walkOK:false, random:true, nextT:1.2, crossed:0 },
+  state:{ car:'g', man:'r', blinkOn:true, pressT:[-1e9, -1e9], wait:false, busy:false, walkOK:false, random:true, autoPress:false, nextT:1.2, crossed:0 },
   scene,
-  readout: st => ({ g: st.wait ? 'WAIT pressed · your turn is coming' : waiting().length ? 'green · cars go · people wait' : 'green · nobody waiting · cars keep going',
+  readout: st => ({ g: st.wait ? 'WAIT pressed · your turn is coming' : waiting().length ? 'green · cars go · people wait for someone to press WAIT' : 'green · nobody waiting · cars keep going',
     a:'amber · cars slow down', r: st.man === 'g' ? 'green man · walk across!' : 'red · cars stop at the line', ra:'red + amber · cars get ready' })[st.car],
   stats: st => [
     { label:'Waiting', value: String(waiting().length) },
+    { label:'Each side', value: `${waitingOn(0)} | ${waitingOn(1)}`, small:true },
     { label:'Crossed', value: String(st.crossed), small:true },
   ],
   buttons:[
     { label:'Send a person', onClick:(st, ui) => { if (!spawn()) ui.flash('Both kerbs are full, wait a moment'); } },
     { label:'Press WAIT', onClick:(st) => userPress(st, 0) },
+    { label:'Auto press: off', onClick:(st) => toggleAutoPress(st) },
     { label:'Random people: on', onClick:(st) => toggleRandom(st) },
   ],
   acts:{ wait:(st, el) => userPress(st, +el.dataset.side || 0) },
@@ -984,9 +1001,11 @@ const ui = mountFigure({
     if (q.get('man') === 'g' || q.get('man') === 'r') st.man = q.get('man');
     if (q.get('wait') === '1') st.wait = true;
     if (q.get('people') === '0') st.random = false;
+    if (q.get('autopress') === '1') st.autoPress = true;
   },
 });
-if (!ui.st.random) toggleRandom(Object.assign(ui.st, { random: true }));   // sync the button text
+if (!ui.st.random) toggleRandom(Object.assign(ui.st, { random: true }));   // sync the buttons' text
+if (ui.st.autoPress) toggleAutoPress(Object.assign(ui.st, { autoPress: false }));
 // the street keeps moving: one simulation step per frame, on its own clock
 { let last = performance.now();
   ui.animate(() => { const n = performance.now(), dt = Math.min(.1, Math.max(0, (n - last) / 1000)); last = n; simulate(ui.st, dt); return true; }); }
@@ -996,6 +1015,7 @@ addEventListener('keydown', e => {
   if (e.key === ' ' || e.key === 'Enter' || k === 'w'){ e.preventDefault(); userPress(ui.st, 0); ui.render(); }
   else if (k === 'p'){ spawn(); ui.render(); }
   else if (k === 'r'){ toggleRandom(ui.st); ui.render(); }
+  else if (k === 'a'){ toggleAutoPress(ui.st); ui.render(); }
 });
 // the first click anywhere turns the sound on (browsers keep it off until the page is used)
 addEventListener('pointerdown', () => { try { getAudio(); if (au && au.ctx.state === 'suspended') au.ctx.resume(); } catch (e) { au = null; } }, { once: true });
