@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Marble tower</title>
+</head>
+<body>
+<script src="core.js"></script>
+<script>
+/* ---------- a toy marble run on clip-together base plates (x = depth, y = width, z = up; 1 unit ~ 5 mm) ----------
+   The real loop, and where each marble is at every step:
+     return tray -> rolls down into the launcher cup -> the arm flings it in an arc -> lands in the top funnel ->
+     circles down and drops through the neck into the tower -> out of the tower's side onto the red chute ->
+     into the switch gate on the second tower, which sends it one of two ways:
+       SPIRAL: green chute -> round and round the big blue funnel -> down the clear pipe -> orange chute -> tray
+       ZIGZAG: yellow ramps back and forth down two posts -> down the clear tube -> orange chute -> tray
+     and in the tray it rolls back down to the launcher. Nothing is ever added or removed: six marbles go round. */
+const BASE = [0, 0, 64, 96, 3, 3];                               // base plates x0,y0,x1,y1,h,r (4 x 6 plates of 16)
+const ZB = BASE[4];
+const MR = 1.8;                                                  // marble radius
+const F1 = { x:14, y:52, rim:98, neck:89, R:10, r:2.6, col:'#7ccf5a' };   // top funnel, on tower 1
+const F2 = { x:34, y:18, rim:56, neck:44.5, R:12, r:2.6, col:'#3e6fd1' }; // big spiral funnel
+const T1 = [10, 48, 18, 56], T1_TOP = 87;                         // tower under the top funnel (x0 y0 x1 y1)
+const GATE = [30, 48, 38, 56, 70, 77];                           // switch gate box on tower 2
+const PIPE1 = { x:F2.x, y:F2.y, z0:13, z1:F2.neck, r:3 };        // clear pipe under the spiral funnel
+const PIPE2 = { x:50, y:90, z0:11, z1:47.5, r:3.2 };             // clear tube at the end of the zigzag
+const TRAY_X = 58, TRAY_Y0 = 94, TRAY_Y1 = 10, TRAY_Z0 = 9.6, TRAY_Z1 = 7.4;
+const trayZ = y => TRAY_Z1 + (TRAY_Z0 - TRAY_Z1) * (y - TRAY_Y1) / (TRAY_Y0 - TRAY_Y1);
+const BLOCKS = ['#f08a2b', '#2fb3a8', '#8c4bd1', '#e2473a', '#3e86d9', '#f2c230'];
+const MARBLES = ['#e2473a', '#f2b431', '#43c25c', '#3e86d9', '#8c4bd1', '#f08a2b'];
+
+/* ---------- small helpers ---------- */
+const add3 = (a, b, k = 1) => [a[0] + b[0]*k, a[1] + b[1]*k, a[2] + b[2]*k];
+const lerp3 = (a, b, t) => [a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t, a[2] + (b[2]-a[2])*t];
+const dist3 = (a, b) => Math.hypot(a[0]-b[0], a[1]-b[1], a[2]-b[2]);
+// straight line from a to b, sampled every ~step (a included, b included)
+function seg(a, b, step = 2.5){ const n = Math.max(1, Math.round(dist3(a, b) / step)); return Array.from({ length: n + 1 }, (_, i) => lerp3(a, b, i / n)); }
+// Catmull-Rom curve through the control points
+function spline(c, step = 2.5){
+  const out = [c[0]];
+  for (let i = 0; i < c.length - 1; i++){
+    const p0 = c[Math.max(0, i-1)], p1 = c[i], p2 = c[i+1], p3 = c[Math.min(c.length-1, i+2)];
+    const n = Math.max(2, Math.round(dist3(p1, p2) / step));
+    for (let k = 1; k <= n; k++){ const t = k/n, t2 = t*t, t3 = t2*t;
+      out.push([0,1,2].map(j => .5*((2*p1[j]) + (-p0[j]+p2[j])*t + (2*p0[j]-5*p1[j]+4*p2[j]-p3[j])*t2 + (-p0[j]+3*p1[j]-3*p2[j]+p3[j])*t3))); }
+  }
+  return out;
+}
+// a flat half-turn (hairpin) round centre (cx, cy): angles in degrees, height falls from za to zb
+function hairpin(cx, cy, r, a0, a1, za, zb, n = 10){
+  return Array.from({ length: n + 1 }, (_, i) => { const t = i/n, a = (a0 + (a1-a0)*t) * Math.PI/180; return [cx + r*Math.cos(a), cy + r*Math.sin(a), za + (zb-za)*t]; });
+}
+const join = (...parts) => parts.reduce((o, p) => o.concat(o.length ? p.slice(1) : p), []);
+// where a marble rolls on a funnel's inner wall at radius rho (its centre sits MR above the cone)
+const coneZ = (F, rho) => F.neck + (F.rim - F.neck) * (rho - F.r) / (F.R - F.r);
+function spiralPath(F, a0, turns, rho0, rho1, n){
+  return Array.from({ length: n + 1 }, (_, i) => { const t = i/n, a = a0 + turns*2*Math.PI*t, rho = rho0 + (rho1 - rho0)*Math.pow(t, .8);
+    return [F.x + rho*Math.cos(a), F.y + rho*Math.sin(a), coneZ(F, rho) + MR*1.15]; });
+}
+
+/* ---------- the launcher: an arm hinged on a block, swinging in the vertical plane that faces the top funnel ---------- */
+const AIM = (() => { const d = [F1.x - TRAY_X, F1.y - 7, 0], l = Math.hypot(d[0], d[1]); return [d[0]/l, d[1]/l, 0]; })();
+const ARM_L = 13, ARM_REST = -10, ARM_REL = 72, ARM_TOP = 118;
+const HINGE = (() => { const a = ARM_REST*Math.PI/180; return add3([58.5, 7, 6.6], [-Math.cos(a)*(-AIM[0]), -Math.cos(a)*(-AIM[1]), -Math.sin(a)], ARM_L); })();
+const armTip = deg => { const a = deg*Math.PI/180; return add3(HINGE, [Math.cos(a)*(-AIM[0]), Math.cos(a)*(-AIM[1]), Math.sin(a)], ARM_L); };
+const cupBall = deg => add3(armTip(deg), [0, 0, 1.3]);
+const RELEASE = cupBall(ARM_REL);
+const LAND_A = Math.atan2(RELEASE[1] - F1.y, RELEASE[0] - F1.x);   // the side of the top funnel the arc comes in over
+
+/* ---------- the tracks (chute floors) and the marble routes ---------- */
+const C1 = seg([T1[2], 52, 80], [GATE[0], 52, 74.5]);                                         // red: tower 1 -> gate
+const G_SPIRAL = spline([[34, 47.5, 72.4], [33.5, 39, 68], [29, 31, 63.5], [23.6, 25, 59.4], [22.2, 18.6, 57.6]]);   // green: gate -> spiral funnel
+const G_ZIG = join(seg([34, 56.5, 72.4], [34, 84, 66]), hairpin(38, 84, 4, 180, 0, 66, 64),
+                   seg([42, 84, 64], [42, 62, 57]), hairpin(46, 62, 4, 180, 360, 57, 55),
+                   seg([50, 62, 55], [50, 88.6, 48.6]));                                         // yellow zigzag
+const E1 = spline([[F2.x + 1.5, F2.y, 11.2], [41, 24, 10.2], [49, 29, 8.9], [55.5, 30, 8.3]]);  // orange: spiral pipe -> tray
+const E2 = seg([PIPE2.x + 1.5, PIPE2.y, 9.6], [55.5, 90, 9.1]);                                // orange: zigzag tube -> tray
+const TRAY = seg([TRAY_X, TRAY_Y0, TRAY_Z0], [TRAY_X, TRAY_Y1, TRAY_Z1], 3);
+const CHUTES = [
+  { pts: C1, col: '#e2473a' }, { pts: G_SPIRAL, col: '#43c25c' }, { pts: G_ZIG, col: '#f2c230' },
+  { pts: E1, col: '#f08a2b' }, { pts: E2, col: '#f08a2b' }, { pts: TRAY, col: '#76a0e2', w: 7.4, h: 2.8 },
+];
+const up = pts => pts.map(p => [p[0], p[1], p[2] + MR]);
+// a route = points the marble's centre passes, each with a speed (units/s) and the part it is inside (drawn there, or hidden)
+function route(...legs){
+  const pts = [];
+  for (const { p, v0, v1 = v0, zone = null } of legs) p.forEach((q, i) => { if (pts.length && i === 0) return; pts.push({ p: q, v: v0 + (v1 - v0) * i / Math.max(1, p.length - 1), zone }); });
+  let s = 0; pts.forEach((q, i) => { if (i) s += dist3(pts[i-1].p, q.p); q.s = s; });
+  return { pts, len: s };
+}
+const neck = F => [F.x, F.y, F.neck + MR];
+const R_COMMON = route(
+  { p: spiralPath(F1, LAND_A, 1.6, 7.6, F1.r + .3, 40), v0: 22, v1: 46, zone: 'F1' },
+  { p: [neck(F1), [F1.x, F1.y, 81.8], [T1[2] - .5, 52, 81.8]], v0: 50, zone: 'hide' },
+  { p: up(C1), v0: 30 },
+  { p: [up(C1)[C1.length-1], [34, 52, 74.2]], v0: 18, zone: 'hide' });
+const R_SPIRAL = route(
+  { p: [[34, 52, 74.2], [34, 47.5, 74.2]], v0: 18, zone: 'hide' },
+  { p: up(G_SPIRAL), v0: 30, v1: 36 },
+  { p: spiralPath(F2, Math.PI, 2.3, F2.R - 2.3, F2.r + .3, 60), v0: 30, v1: 62, zone: 'F2' },
+  { p: [neck(F2), [PIPE1.x, PIPE1.y, PIPE1.z0 + MR]], v0: 55, zone: 'P1' },
+  { p: up(E1), v0: 34 });
+const R_ZIG = route(
+  { p: [[34, 52, 74.2], [34, 56.5, 74.2]], v0: 18, zone: 'hide' },
+  { p: up(G_ZIG), v0: 28 },
+  { p: [[PIPE2.x, PIPE2.y, PIPE2.z1], [PIPE2.x, PIPE2.y, PIPE2.z0 + MR]], v0: 55, zone: 'P2' },
+  { p: up(E2), v0: 30 });
+const ROUTES = { common: R_COMMON, spiral: R_SPIRAL, zigzag: R_ZIG };
+const ENTRY_Y = { spiral: 30, zigzag: 90 };
+function at(rt, s){
+  const P = rt.pts; let i = 1; while (i < P.length - 1 && P[i].s < s) i++;
+  const a = P[i-1], b = P[i], t = Math.max(0, Math.min(1, (s - a.s) / Math.max(1e-6, b.s - a.s)));
+  return { p: lerp3(a.p, b.p, t), v: a.v + (b.v - a.v)*t, zone: t < .5 ? a.zone : b.zone };
+}
+
+/* ---------- state ---------- */
+const st = { pal:'cobalt', gate:'spiral', auto:false, autoT:0, arm:ARM_REST, armPh:'rest', armT:0, runs:0,
+  balls: MARBLES.map((col, i) => ({ id:i, col, mode:'queue', y: 12 + 3.9*(i + 1), s:0, rt:'common', t:0, p:null })) };
+const queue = () => st.balls.filter(b => b.mode === 'queue').sort((a, b) => a.y - b.y);
+const inCup = () => st.balls.find(b => b.mode === 'cup' || b.mode === 'load');
+const slotY = k => 12 + 3.9*k;
+const trayBall = y => [TRAY_X, y, trayZ(y) + MR];
+
+/* ---------- drawing: marbles ---------- */
+function ball(p, col){
+  const [X, Y] = P(...p), r = MR*1.2247;
+  return `<circle cx="${f(X)}" cy="${f(Y)}" r="${f(r)}" fill="${mix(col, '#000000', .18)}" stroke="${INK}" stroke-width=".9"/>`
+    + `<circle cx="${f(X - r*.12)}" cy="${f(Y - r*.14)}" r="${f(r*.72)}" fill="${col}"/>`
+    + `<circle cx="${f(X - r*.36)}" cy="${f(Y - r*.4)}" r="${f(r*.24)}" fill="#ffffff" opacity=".85"/>`;
+}
+const ballsIn = zone => st.balls.filter(b => b.p && b.zone === zone);
+
+/* ---------- drawing: a U-shaped chute along a list of floor points, as short pieces for the painter's sort ---------- */
+function chuteItems(c){
+  const m = matOf(c.col), w = (c.w || 5.6)/2, h = c.h || 2.2, items = [], P_ = c.pts;
+  // the left-hand side at every point (averaged over its two pieces), so neighbouring pieces share their edges round a bend
+  const left = P_.map((_, i) => { const a = P_[Math.max(0, i-1)], b = P_[Math.min(P_.length-1, i+1)], dx = b[0]-a[0], dy = b[1]-a[1], l = Math.hypot(dx, dy) || 1; return [-dy/l, dx/l, 0]; });
+  for (let i = 0; i < P_.length - 1; i++){
+    const a = P_[i], b = P_[i+1], dx = b[0]-a[0], dy = b[1]-a[1], l = Math.hypot(dx, dy) || 1;
+    const sg = vis([-dy/l, dx/l, 0]) ? 1 : -1, n = [-dy/l*sg, dx/l*sg, 0];   // n points to the near wall
+    const aN = add3(a, left[i], w*sg), bN = add3(b, left[i+1], w*sg), aF = add3(a, left[i], -w*sg), bF = add3(b, left[i+1], -w*sg), Z = [0, 0, h];
+    let s = shape([aF, bF, bN, aN], mix(m.l, '#ffffff', .15), 0);                                     // floor
+    s += face(pd([aF, bF, add3(bF, Z), add3(aF, Z)]), m.m);                                             // far wall, inside
+    s += face(pd([aN, bN, add3(bN, Z), add3(aN, Z)]), tone(n, m) === m.l ? m.l : m.m);                 // near wall, outside
+    s += line([add3(aF, Z), add3(bF, Z)], .9) + line([aN, bN], 1.1) + line([add3(aN, Z), add3(bN, Z)], 1.1);
+    if (i === 0) s += line([aF, add3(aF, Z), add3(aN, Z), aN], .9);
+    if (i === P_.length - 2) s += line([bF, add3(bF, Z), add3(bN, Z), bN], .9);
+    items.push({ at: [(a[0]+b[0])/2, (a[1]+b[1])/2, (a[2]+b[2])/2 + .6], svg: s });
+  }
+  return items;
+}
+
+/* ---------- drawing: towers and posts as stacks of blocks (one sort item per block) ---------- */
+function stackItems(x0, y0, x1, y1, z0, z1, k0 = 0, bh = 12){
+  const items = [], n = Math.max(1, Math.round((z1 - z0) / bh));
+  for (let i = 0; i < n; i++){ const za = z0 + (z1 - z0)*i/n, zb = z0 + (z1 - z0)*(i+1)/n, m = matOf(BLOCKS[(k0 + i) % BLOCKS.length]);
+    let s = box(x0, y0, za, x1, y1, zb, m, tone, .9);
+    if (x1 - x0 > 6) s += shape(on(PX(x1 + .05), ellUV((y0 + y1)/2, (za + zb)/2, 1.6, 1.6, 14)), m.d, .7);   // the clip-together hole
+    s += hullInk([[x0,y0,za],[x1,y0,za],[x1,y1,za],[x0,y1,za],[x0,y0,zb],[x1,y0,zb],[x1,y1,zb],[x0,y1,zb]], 1.6);
+    items.push({ at: [(x0+x1)/2, (y0+y1)/2, (za+zb)/2], svg: s });
+  }
+  return items;
+}
+
+/* ---------- drawing: a funnel (a cone narrowing downward) with the marbles circling inside ---------- */
+function funnelSvg(F, groove){
+  const m = matOf(F.col), N = 36;
+  const A = on(PZ(F.neck), ellUV(F.x, F.y, F.r, F.r, N)), B = on(PZ(F.rim), ellUV(F.x, F.y, F.R, F.R, N));
+  let s = cyl(F.x, F.y, F.neck - 3, F.neck + .2, F.r + 1, m, toneI, 1);                      // collar under the neck
+  // inside wall first (only the far half shows, the near outside wall covers the rest)
+  for (let i = 0; i < N; i++){ const j = (i+1) % N, a = (i + .5)/N*2*Math.PI, h = [Math.cos(a), Math.sin(a), 0];
+    s += face(pd([A[i], A[j], B[j], B[i]]), mix(toneI(h.map(v => -v), m), '#ffffff', .12)); }
+  if (groove){ const g = spiralPath(F, Math.PI, 2.3, F.R - 2.3, F.r + .3, 80).map(p => [p[0], p[1], p[2] - MR*1.1]);
+    s += `<path d="${pd(g, false)}" fill="none" stroke="${mix(F.col, '#ffffff', .55)}" stroke-width="1.3" stroke-linecap="round"/>`; }
+  s += ink(pd(A), .8);
+  for (const b of ballsIn(F === F1 ? 'F1' : 'F2')) s += ball(b.p, b.col);
+  // outside wall, near half: shaded by its horizontal facing (a cone seen from above is otherwise all shade)
+  for (let i = 0; i < N; i++){ const j = (i+1) % N, a = (i + .5)/N*2*Math.PI, h = [Math.cos(a), Math.sin(a), 0];
+    if (vis(h)) s += face(pd([A[i], A[j], B[j], B[i]]), tone(h, m)); }
+  s += ink(pd(B), 1.5) + hullInk([...A, ...B], 2.2);
+  return s;
+}
+
+/* ---------- drawing: a clear tube with any marbles falling inside ---------- */
+function tubeSvg(T, zone){
+  const A = on(PZ(T.z0), ellUV(T.x, T.y, T.r, T.r, 20)), B = on(PZ(T.z1), ellUV(T.x, T.y, T.r, T.r, 20));
+  const hull2 = sp(hull([...A, ...B].map(p => P(...p))));
+  let s = `<path d="${hull2}" fill="#cfe9f0" opacity=".35"/>`;
+  for (const b of ballsIn(zone)) s += ball(b.p, b.col);
+  s += `<path d="${hull2}" fill="#cfe9f0" opacity=".25"/>`;
+  s += line([[T.x + T.r*.55, T.y - T.r*.55, T.z0 + 2], [T.x + T.r*.55, T.y - T.r*.55, T.z1 - 2]], 0).replace(INK, '#ffffff').replace('stroke-width="0"', 'stroke-width="1.2" opacity=".7"');
+  s += ink(pd(B), .9) + ink(hull2, 1.2);
+  return s;
+}
+
+/* ---------- drawing: the switch gate, with its lever and sign ---------- */
+function gateSvg(){
+  const [x0, y0, x1, y1, z0, z1] = GATE, m = matOf('#8c4bd1');
+  let s = box(x0, y0, z0, x1, y1, z1, m, tone, .9);
+  s += hullInk([[x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0],[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]], 1.8);
+  // the lever on top leans toward the way it sends marbles: SPIRAL toward -y (right), ZIGZAG toward +y (left)
+  const sd = st.gate === 'spiral' ? -1 : 1, base = [34, 52, z1];
+  s += rod(base, [34, 52 + sd*4.2, z1 + 5.6], .9, METAL, toneI, .9);
+  s += cyl(34, 52 + sd*4.2, z1 + 5.2, z1 + 7.2, 1.6, matOf('#f2c230'), toneI, .9);
+  // sign on a pin: which way it is set
+  s += rod([x1 - 1.2, y1 - 1.2, z1], [x1 - 1.2, y1 - 1.2, z1 + 9], .5, METAL, toneI, .7);
+  s += shape(on(PX(x1 - .8), rrUV(y0 - 3, z1 + 8, y1 + 3, z1 + 15.5, 1.4)), '#fff4d6', 1.1);
+  s += tx(x1 - .7, (y0 + y1)/2, z1 + 10.2, st.gate === 'spiral' ? 'SPIRAL' : 'ZIGZAG', 3.9, INK, 800);
+  return act('gate', s);
+}
+
+/* ---------- drawing: the launcher ---------- */
+function launcherItems(){
+  const m = matOf('#e2473a'), items = [], [hx, hy, hz] = HINGE;
+  const K = 5; let b = box(hx - K, hy - K, ZB, hx + K, hy + K, hz - 1.5, matOf('#3e86d9'), tone, .9);
+  b += hullInk([[hx-K,hy-K,ZB],[hx+K,hy-K,ZB],[hx+K,hy+K,ZB],[hx-K,hy+K,ZB],[hx-K,hy-K,hz-1.5],[hx+K,hy-K,hz-1.5],[hx+K,hy+K,hz-1.5],[hx-K,hy+K,hz-1.5]], 1.6);
+  b += rod([hx - 3, hy, hz - 1.5], [hx - 3, hy, hz + .4], 1, METAL, toneI, .8) + rod([hx + 3, hy, hz - 1.5], [hx + 3, hy, hz + .4], 1, METAL, toneI, .8);
+  items.push({ at: [hx, hy, (ZB + hz)/2], svg: act('launch', b) });
+  const tip = armTip(st.arm);
+  let a = rod(HINGE, tip, 1.3, m, toneI, 1.1) + cylX(HINGE[0] - 3.4, HINGE[0] + 3.4, HINGE[1], HINGE[2], 1.4, METAL, toneI, .9);
+  a += cyl(...tip.slice(0, 2), tip[2] - .8, tip[2] + .8, 3, matOf('#f2c230'), toneI, 1);       // the cup
+  const cb = inCup(); if (cb && cb.p) a += ball(cb.p, cb.col);
+  items.push({ at: lerp3(HINGE, tip, .7), svg: act('launch', a) });
+  return items;
+}
+
+/* ---------- labels (the Labels switch) ---------- */
+function labels(){
+  const on = z => st.balls.some(b => b.zone === z || (z === 'fly' && b.mode === 'fly'));
+  return callouts([
+    { at: armTip(st.arm), text: 'LAUNCHER', on: st.armPh !== 'rest' },
+    { at: [F1.x, F1.y + F1.R, F1.rim], text: 'TOP FUNNEL', on: on('F1') },
+    { at: [T1[2], T1[3], 40], text: 'TOWER', on: false },
+    { at: [GATE[3] - 3, GATE[1], GATE[5] + 11], text: 'SWITCH GATE', on: false },
+    { at: [F2.x + F2.R*.7, F2.y - F2.R*.7, F2.rim], text: 'SPIRAL FUNNEL', on: on('F2') },
+    { at: G_ZIG[Math.round(G_ZIG.length*.62)], text: 'ZIGZAG', on: false },
+    { at: [TRAY_X + 3.7, 60, trayZ(60) + 2], text: 'RETURN TRAY', on: false },
+  ], [0, BASE[2], 0, BASE[3], 0, 104]);
+}
+
+/* ---------- scene ---------- */
+function scene(st, m){
+  let s = board(BASE[0], BASE[1], BASE[2], BASE[3], ZB, BASE[5], { l:'#f6f4ee', m:'#dcd8cd', d:'#b7b2a5' });
+  // base plate seams and studs
+  let seams = '';
+  for (let x = 16; x < BASE[2]; x += 16) seams += pd([[x, 1, ZB + .05], [x, BASE[3] - 1, ZB + .05]], false);
+  for (let y = 16; y < BASE[3]; y += 16) seams += pd([[1, y, ZB + .05], [BASE[2] - 1, y, ZB + .05]], false);
+  s += `<path d="${seams}" fill="none" stroke="#b7b2a5" stroke-width="1"/>`;
+  for (let x = 8; x < BASE[2]; x += 16) for (let y = 8; y < BASE[3]; y += 16) s += shape(on(PZ(ZB + .06), ellUV(x, y, 2, 2, 14)), '#e9e6de', .5);
+  // cast shadows of the tall parts, clipped to the base
+  const bx = (x0, y0, x1, y1, z0, z1) => [[x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0],[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]];
+  const ring = (F, z, r) => on(PZ(z), ellUV(F.x, F.y, r, r, 16));
+  let sh = castShadow([...bx(T1[0], T1[1], T1[2], T1[3], ZB, T1_TOP), ...ring(F1, F1.rim, F1.R)], ZB);
+  sh += castShadow(bx(GATE[0], GATE[1], GATE[2], GATE[3], ZB, GATE[5]), ZB);
+  sh += castShadow([...ring(F2, F2.rim, F2.R), ...ring(F2, ZB, PIPE1.r)], ZB);
+  sh += castShadow([...bx(36, 82, 40, 86, ZB, 63), ...bx(44, 60, 48, 64, ZB, 54)], ZB);
+  sh += `<g opacity=".45">${castShadow(on(PZ(ZB), ellUV(PIPE2.x, PIPE2.y, PIPE2.r, PIPE2.r, 12)).concat(on(PZ(PIPE2.z1), ellUV(PIPE2.x, PIPE2.y, PIPE2.r, PIPE2.r, 12))), ZB)}</g>`;
+  s += clipTo(boardTop(BASE[0], BASE[1], BASE[2], BASE[3], ZB, BASE[5]), sh);
+
+  const items = [];
+  items.push(...stackItems(T1[0], T1[1], T1[2], T1[3], ZB, T1_TOP, 0, 12));
+  items.push(...stackItems(GATE[0], GATE[1], GATE[2], GATE[3], ZB, GATE[4], 2, 11.2));
+  items.push(...stackItems(36, 82, 40, 86, ZB, 63.4, 4, 12));              // zigzag posts, under the hairpins
+  items.push(...stackItems(44, 60, 48, 64, ZB, 54.4, 1, 12.6));
+  items.push(...stackItems(31.5, 37, 35.5, 41, ZB, 66.6, 3, 12.7));        // post under the green chute
+  for (const c of CHUTES) items.push(...chuteItems(c));
+  // the big funnel stands on three legs and its pipe
+  for (const a of [40, 160, 280]){ const r = a*Math.PI/180, top = [F2.x + (F2.R - 1.5)*Math.cos(r), F2.y + (F2.R - 1.5)*Math.sin(r), F2.rim - 1.2];
+    items.push({ at: [top[0], top[1], (ZB + top[2])/2 - 8], svg: rod([top[0], top[1], ZB], top, .8, METAL, toneI, .8) }); }
+  items.push({ at: [F1.x, F1.y, F1.neck], svg: funnelSvg(F1, false) });                 // sorted by the neck, so a chute over the rim draws on top
+  items.push({ at: [F2.x, F2.y, F2.neck], svg: funnelSvg(F2, true) });
+  items.push({ at: [PIPE1.x, PIPE1.y, (PIPE1.z0 + PIPE1.z1)/2], svg: tubeSvg(PIPE1, 'P1') });
+  items.push({ at: [PIPE2.x, PIPE2.y, (PIPE2.z0 + PIPE2.z1)/2], svg: tubeSvg(PIPE2, 'P2') });
+  items.push({ at: [34, 52, GATE[4] + 3], svg: gateSvg() });
+  items.push(...launcherItems());
+  // the hole the marbles leave tower 1 by
+  items.push({ at: [T1[2], 52, 81], svg: shape(on(PX(T1[2] + .06), ellUV(52, 81.4, 2.6, 2.6, 16)), '#2a2522', .8) });
+  for (const b of st.balls) if (b.p && !b.zone && b.mode !== 'cup' && b.mode !== 'load') items.push({ at: [b.p[0], b.p[1], b.p[2] + .4], svg: ball(b.p, b.col) });
+  s += byDepth(items);
+  return s + labels();
+}
+
+/* ---------- motion ---------- */
+function place(b){
+  if (b.mode === 'queue') { b.p = trayBall(b.y); b.zone = null; }
+  else if (b.mode === 'load'){ b.p = lerp3(trayBall(slotY(0)), cupBall(st.arm), ease(Math.min(1, b.t))); b.zone = null; }
+  else if (b.mode === 'cup'){ b.p = cupBall(st.arm); b.zone = null; }
+  else if (b.mode === 'fly'){ const t = Math.min(1, b.t), land = at(R_COMMON, 0).p;
+    b.p = add3(lerp3(RELEASE, land, t), [0, 0, 26*4*t*(1-t)]); b.zone = null; }
+  else if (b.mode === 'run'){ const q = at(ROUTES[b.rt], b.s); b.p = q.p; b.zone = q.zone === 'hide' ? 'hide' : q.zone; }
+}
+function step(dt){
+  // the arm: rest -> flick up (fast) -> settle back down (slow)
+  if (st.armPh === 'flick'){
+    st.arm = Math.min(ARM_TOP, st.arm + dt*900);
+    const cb = st.balls.find(b => b.mode === 'cup');
+    if (cb && st.arm >= ARM_REL){ cb.mode = 'fly'; cb.t = 0; }
+    if (st.arm >= ARM_TOP){ st.armPh = 'back'; }
+  } else if (st.armPh === 'back'){
+    st.arm = Math.max(ARM_REST, st.arm - dt*170); if (st.arm <= ARM_REST) st.armPh = 'rest';
+  }
+  for (const b of st.balls){
+    if (b.mode === 'fly'){ b.t += dt / 1.05; if (b.t >= 1){ b.mode = 'run'; b.rt = 'common'; b.s = 0; } }
+    else if (b.mode === 'run'){
+      b.s += at(ROUTES[b.rt], b.s).v * dt;
+      const rt = ROUTES[b.rt];
+      if (b.s >= rt.len){
+        if (b.rt === 'common'){ b.rt = st.gate; b.s -= rt.len; }                     // the gate decides as the marble arrives
+        else { b.mode = 'queue'; b.y = ENTRY_Y[b.rt]; st.runs++; }
+      }
+    }
+    else if (b.mode === 'load'){ b.t += dt / .3; if (b.t >= 1) b.mode = 'cup'; }
+  }
+  // the tray: each marble rolls down to its place in the line
+  queue().forEach((b, k) => { const ty = slotY(k); if (b.y > ty) b.y = Math.max(ty, b.y - dt*24); });
+  // the first in line rolls into the cup once the arm is back down
+  const q0 = queue()[0];
+  if (!inCup() && st.armPh === 'rest' && q0 && q0.y <= slotY(0) + .05){ q0.mode = 'load'; q0.t = 0; }
+  if (st.auto){ st.autoT -= dt; if (st.autoT <= 0 && st.balls.some(b => b.mode === 'cup') && st.armPh === 'rest'){ launch(); st.autoT = 1.3; } }
+  st.balls.forEach(place);
+  return true;
+}
+function launch(){
+  if (st.armPh !== 'rest') return ui.flash('the arm is still swinging back');
+  if (!st.balls.some(b => b.mode === 'cup')) return ui.flash(queue().length || inCup() ? 'a marble is rolling into the cup' : 'all the marbles are out on the run');
+  st.armPh = 'flick';
+}
+function setAuto(on){
+  st.auto = on; st.autoT = 0;
+  const b = [...document.querySelectorAll('.act')].find(x => /^Auto/.test(x.textContent));
+  if (b) b.textContent = `Auto launch: ${on ? 'on' : 'off'}`;
+}
+
+let ui;
+ui = mountFigure({
+  fig:'13', title:'Marble tower', hint:'launch marbles and pick their way down',
+  size:[BASE[2], BASE[3], 104], palette:'cobalt', state:st,
+  scene,
+  readout: st => `${st.runs} runs`,
+  stats: st => [
+    { label:'Runs', value: String(st.runs) },
+    { label:'On the run', value: String(st.balls.filter(b => b.mode === 'run' || b.mode === 'fly').length), small:true },
+  ],
+  buttonsLabel:'Marble run',
+  buttons:[
+    { label:'Launch a marble', onClick: () => launch() },
+    { label:'Gate', choices: st => [['spiral', 'Spiral funnel'], ['zigzag', 'Zigzag']].map(([k, label]) => ({ label, current: st.gate === k, onClick: () => { st.gate = k; } })) },
+    { label:'Auto launch: off', onClick: st => setAuto(!st.auto) },
+  ],
+  acts:{ launch: () => launch(), gate: st => { st.gate = st.gate === 'spiral' ? 'zigzag' : 'spiral'; } },
+  params:(st, q) => {
+    if (q.get('gate') === 'zigzag') st.gate = 'zigzag';
+    if (q.has('arm')) st.arm = +q.get('arm');
+    // ?run=0.4 puts one marble that far along its route (screenshots): ?run=0.5&gate=zigzag
+    if (q.has('run')){ const b = st.balls[5], rt = q.get('rt') || 'common'; b.mode = 'run'; b.rt = rt; b.s = +q.get('run') * ROUTES[rt].len; }
+  },
+});
+st.balls.forEach(place);
+if (new URLSearchParams(location.search).get('auto') === '1') setAuto(true);
+ui.animate(step);
+seeThrough(ui, () => '', { labelsOnly: true });
+</script>
+</body>
+</html>

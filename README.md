@@ -9,7 +9,7 @@ Open `index.html`: it lists every piece, split into **Games** and **Demonstratio
 |---|---|
 | `index.html` | The hub page, with a live preview card for every piece |
 | `games/` | Pieces with a goal you can fail: Lift Operator, Terminal station, Fishing, Marble Run Adventure |
-| `demos/` | How-it-works figures: Elevator, Escalator, Escalator pair, Train station, Candle, Vending machines, Sandwich kiosk, Traffic light, Washing machine |
+| `demos/` | How-it-works figures: Elevator, Escalator, Escalator pair, Train station, Candle, Vending machines, Sandwich kiosk, Marble tower, Traffic light, Washing machine |
 | `src/` | Editable sources for the figures. They load the shared drawing engine from `src/core.js` |
 | `assets/nav.js` | Adds the "← Gallery" link to each page, plus the `#thumb` preview mode the hub uses |
 
