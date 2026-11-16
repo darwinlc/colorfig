@@ -1,0 +1,20 @@
+---
+title: "Metro station"
+---
+stateDiagram-v2
+  [*] --> street
+  street: Street level
+  concourse: Ticket hall, unpaid side
+  paid: Ticket hall, paid side
+  platform: Platform
+  aboard: On the train
+  street --> street: the bus pulls in [stop empty]
+  street --> street: the bus pulls out [bus at the stop]
+  street --> concourse: down the escalator or lift
+  concourse --> concourse: buy a ticket
+  concourse --> paid: through the gates [has a ticket]
+  paid --> platform: down the escalator or stairs
+  platform --> platform: the train pulls in [no train in]
+  platform --> platform: the train pulls out [train in]
+  platform --> aboard: step on [doors open]
+  aboard --> [*]

@@ -1,0 +1,31 @@
+{
+ "title": "Metro station",
+ "checked": "Every reachable state checked (14 states, 16 steps). All 5 rules hold.",
+ "rules": [
+  {
+   "rule": "Every step can happen, and none is a dead end",
+   "says": "Each of the 5 states is reached from the start, and every path can still reach its end (aboard).",
+   "path": "Holds: all 5 reached, none stuck."
+  },
+  {
+   "rule": "Nobody reaches the platform without paying",
+   "says": "Past the gates (paid side, platform, train) the traveller always has a ticket or a card.",
+   "path": "Take away the has a ticket guard and it breaks in 2 steps: down the escalator or lift, jump the gates."
+  },
+  {
+   "rule": "Nobody steps off the platform edge",
+   "says": "The traveller is only ever on board when a train is in with its doors open.",
+   "path": "Take away the doors open guard and it breaks in 5 steps: down the escalator or lift, buy a ticket, through the gates [has a ticket], down the escalator or stairs, step towards an empty track."
+  },
+  {
+   "rule": "One train at the platform at a time",
+   "says": "A second train never pulls in on top of the first.",
+   "path": "Take away the no train in guard and it breaks in 5 steps: down the escalator or lift, buy a ticket, through the gates [has a ticket], down the escalator or stairs, a second train pulls in."
+  },
+  {
+   "rule": "One bus at the stop at a time",
+   "says": "A second bus never pulls in while one is at the stop.",
+   "path": "Take away the stop empty guard and it breaks in 1 step: a second bus pulls in."
+  }
+ ]
+}
