@@ -461,7 +461,7 @@ function throwLever(lv){
   st.lever[lv] = !st.lever[lv];
   ui.flash(`switch ${lv}: ${st.lever[lv] ? (lv === 'A' ? 'IN line crosses to platform 2' : 'platform 1 crosses to the OUT line') : 'straight'}`, 1400);
 }
-ui = mountFigure({
+ui = mountFigure({ turn:false,   // a game: the figure stays still
   fig:'12', title:'Terminal station', hint:'throw switches A and B so every train gets in and out without a crash',
   size:[BD[2], BD[3], 112], palette:'cobalt', state:st,   // taller than the scene, so it sits lower and leaves the top right clear for the stats
   scene,

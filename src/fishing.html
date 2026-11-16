@@ -293,7 +293,7 @@ function release(){
   st.anim = { kind:'toss', t:0, dur:.7, sp, from, to, arc:10, done: () => { splash(to); swimAway(sp, to); st.swimmers[st.swimmers.length - 1].h = rnd(-.6, .6) + Math.PI*.3; ui.flash(`the ${sp.name.toLowerCase()} swims off`); } };
 }
 
-ui = mountFigure({
+ui = mountFigure({ turn:false,   // a game: the figure stays still
   fig:'11', title:'Fishing', hint:'cast, wait for a bite, reel it in before it gets away',
   size:[BD[2], BD[3], 50], palette:'tomato', state:st,
   scene,

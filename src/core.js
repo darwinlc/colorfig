@@ -24,20 +24,37 @@ const SHADOW = '#41538f';
 /* ---------- projection (x = depth toward viewer-right, y = toward viewer-left, z = up) ---------- */
 const C = Math.cos(Math.PI/6), S = Math.sin(Math.PI/6);
 let OX = 0, OY = 0;
-/* VIEW turns the object in 90° steps about a vertical axis through its centre (RC):
-   0 = front (+x) and left (+y) faces toward the viewer, 1 = turned once (the +y side becomes the front)…
-   Figures keep modelling in their own coordinates; P / Dv / vis / tone / depthOf all apply the turn. */
-let VIEW = 0, RC = [0, 0];
+/* Orthographic camera you can turn (internal names start with CAM_ / cam so they never clash with a figure's names).
+   CAM_YAW turns the viewer around the vertical axis (45 deg = the classic front-left view), CAM_PITCH is how far it looks down
+   (35.26 deg = true isometric). At the defaults P() is exactly the isometric projection every figure was drawn for.
+   rotV(n) maps a world direction into the default view's frame, so vis / tone / any "sum of rotV > 0" test keep
+   working at every angle: the viewer is always (1,1,1) and the light stays put relative to the viewer.
+   The figures here are drawn for the front (+x), left (+y) and top faces, so the camera turns at most CAM_LIM deg
+   either side of the front: within that the same three faces stay toward the viewer and every drawing order holds. */
+let VIEW = 0, RC = [0, 0], RCZ = 0;
 const VIEW_NAMES = ['front', 'left side', 'back', 'right side'];
-const TURNS = [0, 2];                 // the views the UI offers: front and back (figures still draw correctly in all four)
-const rotV = ([x,y,z]) => { switch (VIEW & 3){ case 1: return [y,-x,z]; case 2: return [-x,-y,z]; case 3: return [-y,x,z]; default: return [x,y,z]; } };
-const rotXY = (x,y) => { const r = rotV([x-RC[0], y-RC[1], 0]); return [r[0]+RC[0], r[1]+RC[1]]; };
+const TURNS = [0, 2];
+const CAM_YAW0 = 45, CAM_PITCH0 = Math.atan(1/Math.SQRT2) * 180/Math.PI, CAM_K = Math.sqrt(1.5);
+let CAM_YAW = CAM_YAW0, CAM_PITCH = CAM_PITCH0, CAM_R, CAM_U, CAM_V, CAM_D;                       // right, up, toward viewer, screen-down
+const camBasis = (yaw, pitch) => { const t = yaw*Math.PI/180, p = pitch*Math.PI/180, ct = Math.cos(t), st = Math.sin(t), cp = Math.cos(p), sp2 = Math.sin(p);
+  return { R:[st,-ct,0], U:[-sp2*ct,-sp2*st,cp], V:[cp*ct,cp*st,sp2] }; };
+const CAM_B0 = camBasis(CAM_YAW0, CAM_PITCH0);
+let CAM_LIM = 40;                                                            // deg either side of the front view
+function setCam(yaw, pitch){ CAM_YAW = Math.max(CAM_YAW0 - CAM_LIM, Math.min(CAM_YAW0 + CAM_LIM, yaw)); CAM_PITCH = Math.max(15, Math.min(62, pitch));
+  const b = camBasis(CAM_YAW, CAM_PITCH); CAM_R = b.R; CAM_U = b.U; CAM_V = b.V; CAM_D = CAM_U.map(v => -v); }
+setCam(CAM_YAW0, CAM_PITCH0);
+const camDot = (a,b) => a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+const rotV = n => { const r = camDot(n,CAM_R), u = camDot(n,CAM_U), v = camDot(n,CAM_V); return [0,1,2].map(i => CAM_B0.R[i]*r + CAM_B0.U[i]*u + CAM_B0.V[i]*v); };
+// the light's ground direction turns with the viewer's yaw only (shadows always fall toward the lower left of the screen)
+const yawTurn = ([x,y]) => { const t = (CAM_YAW - CAM_YAW0)*Math.PI/180, c = Math.cos(t), s = Math.sin(t); return [x*c - y*s, x*s + y*c]; };
+const rotXY = (x,y) => [x, y];                                                // kept for old callers
 const P0 = (x,y,z) => [(x-y)*C + OX, (x+y)*S - z + OY];                       // raw iso, no turn
-const P  = (x,y,z) => { const [a,b] = rotXY(x,y); return [(a-b)*C + OX, (a+b)*S - z + OY]; };
-const Dv = (x,y,z) => { const [a,b,c] = rotV([x,y,z]); return [(a-b)*C, (a+b)*S - c]; };
-// distance toward the viewer in the current view: draw parts with smaller depth first
-const depthOf = p => { const [a,b] = rotXY(p[0],p[1]); return a + b + p[2]; };
-// sort [{at:[x,y,z], svg}] back-to-front for the current view and join
+const P  = (x,y,z) => { const q = [x-RC[0], y-RC[1], z-RCZ];
+  return [CAM_K*camDot(q,CAM_R) + (RC[0]-RC[1])*C + OX, CAM_K*camDot(q,CAM_D) + (RC[0]+RC[1])*S - RCZ + OY]; };
+const Dv = (x,y,z) => [CAM_K*camDot([x,y,z],CAM_R), CAM_K*camDot([x,y,z],CAM_D)];
+// distance toward the viewer: draw parts with smaller depth first
+const depthOf = p => camDot(p, CAM_V);
+// sort [{at:[x,y,z], svg}] back-to-front for the current camera and join
 const byDepth = parts => parts.filter(Boolean).sort((p,q) => depthOf(p.at) - depthOf(q.at)).map(p => p.svg).join('');
 const f  = v => v.toFixed(1);
 const pd = (pts, close=true) => 'M' + pts.map(p => { const q = P(p[0],p[1],p[2]); return f(q[0])+' '+f(q[1]); }).join('L') + (close ? 'Z' : '');
@@ -67,8 +84,14 @@ const SHADOW_LEN = 0.45;
 let L = [0,0,1], SH = [0,0];
 function setLight(deg){ const a=deg*Math.PI/180; SH=[SHADOW_K*Math.cos(a), SHADOW_K*Math.sin(a)]; L=norm([-SH[0],-SH[1],1]); }
 const LIN = norm([.6,.2,1]);                       // fixed light for interiors / small props
-const tone  = (n,m) => { const d=dot(rotV(n),L);   return d>-.15 ? m.l : d>-.45 ? m.m : m.d; };   // exterior, follows the sun
-const toneI = (n,m) => { const d=dot(rotV(n),LIN); return d>.6 ? m.l : d>.05 ? m.m : m.d; };      // interior / props
+// Three flat tones, blended across a narrow band at each step, so a face that turns past a threshold while the
+// figure turns fades between tones instead of snapping (at rest almost every face still sits on a pure tone).
+const SOFT = .18;
+const step3 = (d, hi, lo, m) => { const ss = (a, b, x) => { const k = Math.min(1, Math.max(0, (x - a)/(b - a))); return k*k*(3 - 2*k); };
+  const a = ss(hi - SOFT, hi + SOFT, d), b = ss(lo - SOFT, lo + SOFT, d);
+  return a >= 1 ? m.l : b <= 0 ? m.d : a > 0 ? mix(m.m, m.l, a) : b < 1 ? mix(m.d, m.m, b) : m.m; };
+const tone  = (n,m) => step3(dot(rotV(n),L),   -.15, -.45, m);   // exterior, follows the sun
+const toneI = (n,m) => step3(dot(rotV(n),LIN),  .6,   .05, m);   // interior / props
 const mix = (a,b,t) => '#' + [1,3,5].map(i => Math.round(parseInt(a.substr(i,2),16)*(1-t) + parseInt(b.substr(i,2),16)*t).toString(16).padStart(2,'0')).join('');
 const matOf = hex => ({ l:hex, m:mix(hex,'#000000',.16), d:mix(hex,'#000000',.42) });
 const ease = t => t<.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2;
@@ -152,8 +175,8 @@ const txY = (x,y,z,str,size,col=INK,weight=700) => { const o=P(x,y,z);
 // the light stays put relative to the viewer, so the shadow is cast in turned coordinates
 // z0: the surface it falls on (a board, a counter); clip it to that surface with clipTo(...) if it could spill off.
 // clip: the 3D outline of the surface it falls on (e.g. boardTop(...)), so it can't spill over the edge.
-const castShadow = (pts3, z0=0, clip=null) => { const k = SHADOW_LEN / SHADOW_K;
-  const s = fill(sp(hull(pts3.map(([x,y,z]) => { const [a,b] = rotXY(x,y); return P0(a+(z-z0)*SH[0]*k, b+(z-z0)*SH[1]*k, z0); }))), SHADOW);
+const castShadow = (pts3, z0=0, clip=null) => { const k = SHADOW_LEN / SHADOW_K, [sx, sy] = yawTurn(SH);
+  const s = fill(sp(hull(pts3.map(([x,y,z]) => P(x+(z-z0)*sx*k, y+(z-z0)*sy*k, z0)))), SHADOW);
   return clip ? clipTo(clip, s) : s; };
 // A board for the object to stand on (a tray, a desk top, a counter): a rounded slab from (x0,y0) to (x1,y1), h thick.
 // Draw it first; then castShadow(points, h, boardTop(x0,y0,x1,y1,h,r)) so shadows lie on it and stop at its edge.
@@ -196,7 +219,8 @@ const CORE_CSS = `
   header{width:100%;max-width:760px;display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
   header h1{font-size:13px;font-weight:600;margin:0;letter-spacing:.02em} header span{color:var(--muted)}
   #fig{width:100%;max-width:760px;height:auto;display:block;margin:4px 0 8px;user-select:none;overflow:visible}
-  #fig [data-act]{cursor:pointer}
+  #fig{cursor:grab} #fig.drag{cursor:grabbing} #fig [data-act]{cursor:pointer}
+  .row button[aria-pressed=true]{background:var(--ink);color:var(--paper)}
   #readout, .idea{display:none}   /* status line + big idea are off: the buttons and motion tell the story */
   .idea{width:100%;max-width:760px;margin:-6px 0 16px;font-size:12.5px;line-height:1.5;text-align:center;color:var(--ink)}
   .idea strong{letter-spacing:.12em;text-transform:uppercase;font-size:11px;margin-right:8px}
@@ -283,6 +307,7 @@ function mountFigure(cfg){
     <div class="controls">
       <div class="ctl"><label for="wb">Hand-drawn wobble</label><input id="wb" type="range" min="0" max="7" step="0.1" value="2.4"></div>
       <div class="ctl"><label>Colour</label><div class="row" id="pals"></div></div>
+      ${cfg.turn === false ? '' : '<div class="ctl"><label>View (drag the figure to turn it)</label><div class="row"><button id="vreset">Front view</button><button id="vspin" aria-pressed="false">Turntable</button></div></div>'}
       <div class="ctl" id="lblctl" hidden><label>Labels</label><div class="row"><button id="lbl" aria-pressed="true">On</button></div></div>
     </div>
     ${cfg.credit === false ? '' : '<footer class="made-with"><a href="https://april-zhu.com/colorfigures" target="_blank" rel="noopener">Made with Colorfigures ↗</a></footer>'}`;
@@ -296,8 +321,8 @@ function mountFigure(cfg){
   // frame on the object itself: centred, filling ~60% of the width / ~78% of the height of a 4:3 view.
   // The cast shadow is allowed to spill outside the frame (svg overflow is visible).
   const [W,D,H] = cfg.size, pts = [];
-  OX = OY = 0; RC = cfg.center || [W/2, D/2];
-  VIEW = 0;
+  OX = OY = 0; RC = cfg.center || [W/2, D/2]; RCZ = H/2;
+  VIEW = 0; setCam(CAM_YAW0, CAM_PITCH0);
   for (const x of [0,W]) for (const y of [0,D]) for (const z of [0,H]) pts.push(P(x,y,z));
   const xs=pts.map(p=>p[0]), ys=pts.map(p=>p[1]);
   const bw = Math.max(...xs)-Math.min(...xs), bh = Math.max(...ys)-Math.min(...ys);
@@ -327,6 +352,34 @@ function mountFigure(cfg){
   ui.animate = step => { let last = performance.now();
     const loop = () => { const now = performance.now(), dt = Math.max(0, Math.min(.05,(now-last)/1000)); last = now; const more = step(dt) !== false; ui.render(); if (more) setTimeout(loop, 16); };
     setTimeout(loop, 16); };
+
+  // turning: drag anywhere that is not a clickable part (the figure turns the way the pointer moves), arrow keys nudge,
+  // double-click eases back to the front view. cfg.turn = false keeps the figure still (games that use the pointer).
+  // one redraw on the next frame (a timer stands in when frames don't come: a hidden tab, a headless shot)
+  ui.invalidate = () => { if (ui._inv) return; const go = () => { if (!ui._inv) return; cancelAnimationFrame(ui._inv); clearTimeout(ui._invT); ui._inv = 0; ui.render(); };
+    ui._inv = requestAnimationFrame(go); ui._invT = setTimeout(go, 60); };
+  let camAnim = 0, spin = false;
+  const camTo = (y, p, ms=700) => { const y0 = CAM_YAW, p0 = CAM_PITCH, id = ++camAnim; let t = 0;
+    ui.animate(dt => { if (id !== camAnim) return false; t += dt*1000; const k = Math.min(1, t / ms), e = ease(k); setCam(y0 + (y - y0)*e, p0 + (p - p0)*e); return k < 1; }); };
+  ui.camTo = camTo;
+  if (cfg.turn !== false){
+    let drag = null;
+    svg.addEventListener('pointerdown', e => { if (e.button || e.target.closest('[data-act]')) return;
+      camAnim++; drag = { x:e.clientX, y:e.clientY, yaw:CAM_YAW, pitch:CAM_PITCH }; svg.classList.add('drag'); try { svg.setPointerCapture(e.pointerId); } catch {} });
+    svg.addEventListener('pointermove', e => { if (!drag) return; const k = 300 / svg.getBoundingClientRect().width;
+      setCam(drag.yaw + (e.clientX - drag.x)*.55*k, drag.pitch + (e.clientY - drag.y)*.35*k); ui.invalidate(); });
+    const endDrag = () => { drag = null; svg.classList.remove('drag'); };
+    svg.addEventListener('pointerup', endDrag); svg.addEventListener('pointercancel', endDrag);
+    svg.addEventListener('dblclick', e => { if (!e.target.closest('[data-act]')) camTo(CAM_YAW0, CAM_PITCH0); });
+    addEventListener('keydown', e => { const k = { ArrowLeft:[-10,0], ArrowRight:[10,0], ArrowUp:[0,8], ArrowDown:[0,-8] }[e.key];
+      if (!k || /input|textarea/i.test(e.target.tagName)) return; e.preventDefault(); camTo(CAM_YAW + k[0], CAM_PITCH + k[1], 260); });
+    const vsp = document.getElementById('vspin');
+    document.getElementById('vreset').onclick = () => { spin = false; vsp.setAttribute('aria-pressed', false); camTo(CAM_YAW0, CAM_PITCH0); };
+    vsp.onclick = () => { spin = !spin; vsp.setAttribute('aria-pressed', spin); camAnim++; let dir = 1;   // swings to and fro inside the limit
+      if (spin) ui.animate(dt => { if (!spin) return false; let y = CAM_YAW + dir*dt*16;
+        if (Math.abs(y - CAM_YAW0) >= CAM_LIM - .5){ dir = -dir; y = CAM_YAW + dir*dt*16; } setCam(y, CAM_PITCH); return true; }); };
+    if (q.has('yaw') || q.has('pitch')) setCam(+(q.get('yaw') ?? CAM_YAW0), +(q.get('pitch') ?? CAM_PITCH0));
+  }
 
   // clickable parts react on press, not on click: while something animates, the scene is redrawn every frame, so the
   // element under the pointer is replaced between press and release and a 'click' would never fire
@@ -447,7 +500,7 @@ function seeThrough(ui, caption, opt = {}){
   const cap = document.createElement('p'); cap.className = 'xcap'; if (!opt.labelsOnly) stage.after(cap);
   const css = document.createElement('style');
   css.textContent = '.vset{position:absolute;top:4px;right:0;z-index:2;display:flex;flex-direction:column;align-items:flex-end;gap:8px}.vset .act[aria-pressed=true]{background:var(--ink);color:var(--paper)}'
-    + '.xcap{width:100%;max-width:760px;min-height:3em;margin:0 0 14px;font-size:12.5px;line-height:1.5;text-align:center;transition:opacity .3s}'
+    + '.xcap{width:100%;max-width:760px;min-height:3em;margin:0 0 14px;font-size:12.5px;line-height:1.5;text-align:center;opacity:0;transition:opacity .3s}'
     + '@media (max-width:560px){.vset{position:static;flex-direction:row;margin:4px 0}}';
   document.head.appendChild(css);
   const r0 = ui.render; ui.render = () => { r0(); cap.style.opacity = st.xr > .5 ? 1 : 0; cap.textContent = caption(st); };

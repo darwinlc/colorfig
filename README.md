@@ -17,6 +17,13 @@ Each page in `games/` and `demos/` is self-contained, so it works when opened st
 Lift Operator, Marble Run, Traffic light and Washing machine have no separate source: edit the page itself.
 (Traffic light and Washing machine come from the newer Colorfigures engine with a free camera, built into the page.)
 
+## Turning a figure
+
+Every demo can be turned: drag the figure (or use the arrow keys), and use **Front view** / **Turntable** under it.
+Double-click returns to the front. Figures built on `src/core.js` turn up to 40° either side of the front, so the
+faces they were drawn for always stay toward you; Traffic light and Washing machine turn all the way round.
+Games keep a still view (`turn:false` in `mountFigure`).
+
 ## Editing a figure
 
 1. Edit `src/<name>.html`. Open it in a browser while you work: it loads `core.js` from the same folder.
