@@ -386,3 +386,70 @@ function mountFigure(cfg){
   if (art.querySelector('.tag')) lblctl.hidden = false;
   return ui;
 }
+
+/* ---------- see-through + labels kit (shared; each figure supplies its own working parts) ----------
+   callouts(items, B): label pills in two columns either side of the object, sorted top to bottom so leaders never cross.
+     items: [{ at:[x,y,z], text, on }], B: the object's bounds [x0, x1, y0, y1, z0, z1]. on = that part is working now.
+   seeThrough(ui, caption, opt): the See-through / Labels switches (top right, under the stats) and a caption under
+     the figure while see-through is on. It animates st.xr from 0 to 1 (and back); the scene fades its casing by st.xr.
+     opt.labelsOnly: only the Labels switch. ?xr=1 starts in see-through, ?labels=1 starts with labels on. */
+function callouts(items, B){
+  const pts = []; for (const x of [B[0], B[1]]) for (const y of [B[2], B[3]]) for (const z of [B[4], B[5]]) pts.push(P(x, y, z));
+  const xmin = Math.min(...pts.map(p => p[0])), xmax = Math.max(...pts.map(p => p[0])), cx = (xmin + xmax)/2;
+  const k = INK_K, fs = 8.6*k, hgt = fs*1.8, gap = hgt + 3*k;
+  const svgEl = document.getElementById('fig'), vb = svgEl.viewBox.baseVal, btn = document.getElementById('btns');
+  const wMax = Math.max(...items.map(it => it.text.length))*fs*.62 + fs*1.5 + 12*k;
+  const roomL = xmin - vb.x >= wMax, roomR = vb.x + vb.width - xmax >= wMax;
+  const L = [], R = [];
+  for (const it of items){ const [X, Y] = P(...it.at); ((X < cx && roomL) || !roomR ? L : R).push({ ...it, X, Y }); }
+  // the left column starts under the buttons, the right one under the stats and switches
+  const top = { [-1]: fs, [1]: fs };
+  const below = (el, side) => { if (!el || !svgEl.getScreenCTM()) return; const r = el.getBoundingClientRect(); if (!r.height) return;
+    const q = new DOMPoint(r.left, r.bottom + 10).matrixTransform(svgEl.getScreenCTM().inverse()); if (q.y > 0) top[side] = q.y + hgt/2; };
+  below(btn, -1); below(document.querySelector('.vset') || document.getElementById('stats'), 1);
+  let s = '';
+  for (const [col, side] of [[L, -1], [R, 1]]){
+    col.sort((a, b) => a.Y - b.Y);
+    let y = -1e9; for (const c of col){ c.py = Math.max(c.Y, y + gap, top[side]); y = c.py; }
+    const bottom = vb.y + vb.height - hgt; if (col.length && col[col.length-1].py > bottom){   // ran off the bottom: pack them upward
+      let yb = bottom; for (let i = col.length - 1; i >= 0; i--){ col[i].py = Math.min(col[i].py, yb); yb = col[i].py - gap; } }
+    for (const c of col){
+      const w = c.text.length*fs*.62 + fs*1.5;
+      let px = side < 0 ? xmin - 10*k - w/2 : xmax + 10*k + w/2; px = Math.max(vb.x + w/2 + 2*k, Math.min(vb.x + vb.width - w/2 - 2*k, px));
+      const ex = px - side*w/2;
+      s += `<g class="tag${c.on ? ' on' : ''}" pointer-events="none"><path d="M${f(c.X)} ${f(c.Y)}L${f(ex + side*-4*k)} ${f(c.py)}L${f(ex)} ${f(c.py)}" fill="none" stroke="${INK}" stroke-width="1"/>`
+        + `<circle cx="${f(c.X)}" cy="${f(c.Y)}" r="${f(1.4*k)}" fill="${INK}"/>`
+        + `<rect x="${f(px - w/2)}" y="${f(c.py - hgt/2)}" width="${f(w)}" height="${f(hgt)}" rx="${f(hgt/2)}" fill="${c.on ? 'var(--accent,#f4b829)' : '#fff4d6'}" stroke="${INK}" stroke-width="1.2"/>`
+        + `<text x="${f(px)}" y="${f(c.py + fs*.36)}" font-size="${f(fs)}" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-weight="800" letter-spacing=".04em" fill="${INK}">${c.text}</text></g>`;
+    }
+  }
+  return s;
+}
+function seeThrough(ui, caption, opt = {}){
+  const st = ui.st, q = new URLSearchParams(location.search), html = document.documentElement;
+  if (q.get('labels') !== '1') html.classList.add('nolabels');
+  if (st.xr == null){ st.xr = 0; st.xrT = 0; }
+  if (q.get('xr') === '1' && !opt.labelsOnly) st.xr = st.xrT = 1;
+  document.getElementById('lblctl').remove();                       // the switches live up by the figure instead
+  const vset = document.createElement('div'); vset.className = 'vset';
+  vset.innerHTML = (opt.labelsOnly ? '' : '<button class="act" id="xrb" aria-pressed="false">See-through</button>') + '<button class="act" id="lblb" aria-pressed="false">Labels</button>';
+  const stage = document.querySelector('.stage'), stats = document.getElementById('stats');
+  stage.appendChild(vset);                                           // under the stats (which redraw themselves, so not inside them)
+  const place = () => { vset.style.top = stats && innerWidth > 560 ? (stats.offsetTop + stats.offsetHeight + 10) + 'px' : ''; };
+  place(); if (stats && window.ResizeObserver) new ResizeObserver(place).observe(stats); addEventListener('resize', place);
+  const xrb = document.getElementById('xrb'), lblb = document.getElementById('lblb');
+  const sync = () => { if (xrb) xrb.setAttribute('aria-pressed', !!st.xrT); lblb.setAttribute('aria-pressed', !html.classList.contains('nolabels')); };
+  if (xrb) xrb.onclick = () => { st.xrT = st.xrT ? 0 : 1; sync();
+    if (st.xrAnim) return; st.xrAnim = true;
+    ui.animate(dt => { const g = Math.sign(st.xrT - st.xr); st.xr = Math.min(1, Math.max(0, st.xr + g*dt/.7)); return (st.xrAnim = st.xr !== st.xrT); }); };
+  lblb.onclick = () => { html.classList.toggle('nolabels'); sync(); ui.render(); };
+  sync();
+  const cap = document.createElement('p'); cap.className = 'xcap'; if (!opt.labelsOnly) stage.after(cap);
+  const css = document.createElement('style');
+  css.textContent = '.vset{position:absolute;top:4px;right:0;z-index:2;display:flex;flex-direction:column;align-items:flex-end;gap:8px}.vset .act[aria-pressed=true]{background:var(--ink);color:var(--paper)}'
+    + '.xcap{width:100%;max-width:760px;min-height:3em;margin:0 0 14px;font-size:12.5px;line-height:1.5;text-align:center;transition:opacity .3s}'
+    + '@media (max-width:560px){.vset{position:static;flex-direction:row;margin:4px 0}}';
+  document.head.appendChild(css);
+  const r0 = ui.render; ui.render = () => { r0(); cap.style.opacity = st.xr > .5 ? 1 : 0; cap.textContent = caption(st); };
+  ui.render();
+}

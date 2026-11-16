@@ -43,6 +43,13 @@ function shaft(){
   for (let f = 1; f < NF; f++) s += line([[3,3.1,f*FH],[W,3.1,f*FH]], .6);                    // slab joints
   s += fill(pd(on(PZ(.1), rectUV(3, 3, W, D-3))), SHAFT.d);                                     // pit floor
   s += box(28, 3, 0, 31, 7, HB-6, matOf('#8f989b'), toneI, .8);                                           // guide rail
+  // buffers in the pit: springs that would catch the car (and the counterweight) if they ever overran the bottom
+  for (const [x, y] of [[24, 30], [24, 44], [45, 8.5]]){
+    s += cyl(x, y, .1, 2, 3.2, DARK, toneI, .8);
+    let c = ''; for (let k = 0; k < 4; k++) c += pd([[x - 2, y + 1, 2.4 + k*1.4], [x + 2, y - 1, 3.1 + k*1.4]], false);
+    s += `<path d="${c}" fill="none" stroke="${METAL.d}" stroke-width="1.1" stroke-linecap="round"/>`;
+    s += cyl(x, y, 7.6, 8.6, 2.6, DARK, toneI, .8);
+  }
   return s;
 }
 function counterweight(cz){
@@ -136,18 +143,18 @@ function machine(){
 
 /* ---------- scene ---------- */
 function scene(st, m){
-  const cz = carZ(st.pos), X = PX(W);
+  const cz = carZ(st.pos), X = PX(W), k = ease(st.xr || 0), ghost = svg => k > .01 ? `<g opacity="${f(1 - .82*k)}">${svg}</g>` : svg;
   let s = castShadow([...on(PX(0), OUT), ...on(PX(W), OUT), [16,20,HB+16],[36,44,HB+16]]);
 
-  // everything inside the shaft, seen through the glass openings
+  // everything inside the shaft: seen through the glass openings, or through the whole wall when see-through is on.
+  // It lies inside the body, so the walls drawn over it hide it wherever they are solid.
   const holes = Array.from({ length: NF }, (_, f) => pd(on(X, openUV(f))) ).join('');
-  s += `<clipPath id="shaftClip"><path d="${holes}"/></clipPath>`;
-  s += `<g clip-path="url(#shaftClip)">${shaft()}${counterweight(cz)}${car(cz, st.door)}</g>`;
+  s += shaft() + counterweight(cz) + car(cz, st.door);
   for (let f = 0; f < NF; f++) s += glassTint(f);
 
   // front face with its openings; the basement part is concrete, below the ground line
-  s += `<path d="${pd(on(X, OUT))}${holes}" fill="${tone([1,0,0], m)}" fill-rule="evenodd"/>`;
-  s += `<path d="${pd(on(PX(W + .05), rectUV(.4, .4, D - .4, FH)))}${pd(on(PX(W + .05), openUV(0)))}" fill="${CONC.l}" fill-rule="evenodd"/>`;
+  s += ghost(`<path d="${pd(on(X, OUT))}${holes}" fill="${tone([1,0,0], m)}" fill-rule="evenodd"/>`
+    + `<path d="${pd(on(PX(W + .05), rectUV(.4, .4, D - .4, FH)))}${pd(on(PX(W + .05), openUV(0)))}" fill="${CONC.l}" fill-rule="evenodd"/>`);
   for (let f = 0; f < NF; f++) s += ink(pd(on(X, openUV(f))), 1.7);
   s += ink(pd(on(PX(W + .1), rectUV(STRIP[1], 1, STRIP[1], HB - 1))), .8);
 
@@ -161,11 +168,13 @@ function scene(st, m){
   s += display();
 
   // outer body, left side
-  s += extrude(OUT, 0, W, m);
   const sideC = tone([0,1,0], m), Y = PY(D + .2);
-  s += shape(on(Y, rectUV(.4, .4, W - .4, FH)), tone([0,1,0], CONC), 0);
-  for (let f = 2; f < NF; f++) s += line([[1, D + .2, f*FH],[W - 1, D + .2, f*FH]], .8);
-  s += txY(W/2, D + .3, 202, 'LIFT', 9, sideC === m.l ? m.m : m.d, 800);
+  let side = extrude(OUT, 0, W, m);
+  side += shape(on(Y, rectUV(.4, .4, W - .4, FH)), tone([0,1,0], CONC), 0);
+  for (let f = 2; f < NF; f++) side += line([[1, D + .2, f*FH],[W - 1, D + .2, f*FH]], .8);
+  side += txY(W/2, D + .3, 202, 'LIFT', 9, sideC === m.l ? m.m : m.d, 800);
+  s += ghost(side);
+  if (k > .01) s += `<g opacity="${f(k)}">${line([[34, 36, HB - 6], [39, 26 + 7.5, HB]], 1.3)}${line([[45, 8.5, HB - 6], [39, 26 - 7.5, HB]], 1.3)}</g>`;   // ropes up through the roof
   // ground line (the basement is below it)
   s += `<path d="${pd([[W + .1, 0, FH],[W + .1, D, FH],[0, D + .2, FH]], false)}" fill="none" stroke="#4f9a45" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>`;
   s += tx(W + .3, 60, FH - 7, 'BASEMENT', 3, CONC.d, 800);
@@ -173,7 +182,25 @@ function scene(st, m){
   s += ink(pd(on(X, OUT)), 2.2);
   s += hullInk([...on(PX(0), OUT), ...on(PX(W), OUT)], 2.8);
   s += machine();
-  return s;
+  return s + labels(st, cz);
+}
+
+/* ---------- labels ---------- */
+function labels(st, cz){
+  const moving = st.phase === 'moving', xr = st.xr > .5, fl = 3;
+  const items = [
+    { at: [42, 26, HB + 9], text: 'MOTOR + SHEAVE', on: moving },
+    { at: [W + .2, 36, 205], text: 'FLOOR DISPLAY', on: false },
+    { at: [W + .2, 8, fl*FH + 14], text: 'CALL BUTTON', on: st.req.some(Boolean) },
+    { at: [W + .2, 40, fl*FH + 14], text: 'LANDING DOORS', on: st.door > .01 },
+    { at: [CX1, CY0 + 2, cz + CH/2], text: 'CAR', on: moving },
+  ];
+  if (xr) items.push(
+    { at: [34, 36, cz + CH + 20], text: 'HOIST ROPES', on: moving },
+    { at: [50, 8.5, 166 - cz + 13], text: 'COUNTERWEIGHT', on: moving },
+    { at: [31, 5, 120], text: 'GUIDE RAIL', on: false },
+    { at: [24, 37, 8], text: 'BUFFERS', on: false });
+  return callouts(items, [0, W + 2.5, 0, D, 0, HB + 17]);
 }
 
 /* ---------- behaviour: a simple collective controller ---------- */
@@ -246,6 +273,9 @@ ui = mountFigure({
     if (q.get('open') === '1'){ st.door = 1; st.phase = 'dwell'; st.t = DWELL; }
   },
 });
+seeThrough(ui, st => st.phase === 'moving'
+  ? `The motor turns the sheave on the roof. The ropes lift the car ${st.dir > 0 ? 'up' : 'down'} while the counterweight goes the other way, so the motor only lifts the difference.`
+  : 'The car hangs on ropes over the sheave, balanced by the counterweight. Guide rails keep it straight; buffers in the pit are the last safety stop.');
 </script>
 </body>
 </html>

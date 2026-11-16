@@ -9,12 +9,13 @@ Open `index.html`: it lists every piece, split into **Games** and **Demonstratio
 |---|---|
 | `index.html` | The hub page, with a live preview card for every piece |
 | `games/` | Pieces with a goal you can fail: Lift Operator, Terminal station, Fishing, Marble Run Adventure |
-| `demos/` | How-it-works figures: Elevator, Escalator, Escalator pair, Train station, Candle, Vending machines, Sandwich kiosk |
+| `demos/` | How-it-works figures: Elevator, Escalator, Escalator pair, Train station, Candle, Vending machines, Sandwich kiosk, Traffic light, Washing machine |
 | `src/` | Editable sources for the figures. They load the shared drawing engine from `src/core.js` |
 | `assets/nav.js` | Adds the "← Gallery" link to each page, plus the `#thumb` preview mode the hub uses |
 
 Each page in `games/` and `demos/` is self-contained, so it works when opened straight from disk.
-Lift Operator and Marble Run have no separate source: edit the page itself.
+Lift Operator, Marble Run, Traffic light and Washing machine have no separate source: edit the page itself.
+(Traffic light and Washing machine come from the newer Colorfigures engine with a free camera, built into the page.)
 
 ## Editing a figure
 
