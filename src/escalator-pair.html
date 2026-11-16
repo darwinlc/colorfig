@@ -256,7 +256,8 @@ function step(dt){
   // reverse together, only when both have stopped, so the two never run the same way
   if (st.units.every(u => u.dir !== u.dirT && u.v === 0)) for (const u of st.units){ u.dir = u.dirT; u.idle = 0; }
   movePeople(dt);
-  return true;
+  // nothing left to move (nobody coming, nobody on them, both stopped): the page goes quiet until a button wakes it
+  return !(!fl.every && !st.people.length && st.units.every(u => u.v === 0 && u.dir === u.dirT));
 }
 function swap(){ for (const u of st.units) u.dirT = -u.dirT; }
 
@@ -289,7 +290,7 @@ ui = mountFigure({
     if (q.has('v')) for (const u of st.units) u.v = +q.get('v');
   },
 });
-ui.animate(step);
+ui.loop(step);
 </script>
 </body>
 </html>

@@ -24,6 +24,14 @@ Double-click returns to the front. Figures built on `src/core.js` turn up to 40Â
 faces they were drawn for always stay toward you; Traffic light and Washing machine turn all the way round.
 Games keep a still view (`turn:false` in `mountFigure`).
 
+## Battery use
+
+Animations run at most 30 frames a second, pause while the page is hidden, and leave the page alone when a frame
+draws nothing new. A figure with ongoing motion should start it with `ui.loop(step)` and return `false` from `step`
+when nothing moves: the page then goes quiet until a button, picker, clickable part or key wakes it. On touch
+screens the hand-drawn filter is switched off (it is recalculated every frame), and gallery previews freeze after
+their first two seconds.
+
 ## Editing a figure
 
 1. Edit `src/<name>.html`. Open it in a browser while you work: it loads `core.js` from the same folder.

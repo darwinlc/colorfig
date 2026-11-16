@@ -12,8 +12,14 @@
     html.thumb .toast,html.thumb #readout,html.thumb .idea,html.thumb #ov,html.thumb .bar,html.thumb .gal-back,
     html.thumb .vset,html.thumb .mcap,html.thumb .zchip,html.thumb .lgd,html.thumb .kpad{display:none!important}
     html.thumb body{padding:0!important;overflow:hidden!important;justify-content:center;min-height:100vh}
-    html.thumb #fig{margin:0 auto!important}`;
-  if (thumb) document.documentElement.classList.add('thumb');
+    html.thumb #fig{margin:0 auto!important}
+    @media (pointer:coarse){#art{filter:none!important}}`;   /* the hand-drawn filter is recalculated every frame: too costly on tablets and phones */
+  if (thumb){
+    document.documentElement.classList.add('thumb');
+    // a preview card shows the figure's first moments, then freezes: no timers, no frames, so a gallery full of
+    // previews costs nothing once drawn (every page's animation runs on these three)
+    addEventListener('load', () => setTimeout(() => { const no = () => 0; window.requestAnimationFrame = no; window.setTimeout = no; window.setInterval = no; }, 2000));
+  }
   const add = () => {
     const st = document.createElement('style'); st.textContent = css; document.head.appendChild(st);
     if (thumb) return;

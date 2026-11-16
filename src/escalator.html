@@ -293,7 +293,8 @@ function step(dt){
   const fl = FLOWS[st.flow];
   if (fl.every){ st.flowT += dt; if (st.flowT >= fl.every){ st.flowT = 0; spawn(sideOf(st.dirT)); } }
   drive(dt); movePeople(dt);
-  return true;
+  // nothing left to move (nobody coming, nobody on it, stopped): the page goes quiet until a button wakes it
+  return !(!fl.every && !st.people.length && st.v === 0 && st.dir === st.dirT);
 }
 
 let ui;
@@ -321,7 +322,7 @@ ui = mountFigure({
     if (q.has('v')) st.v = +q.get('v');
   },
 });
-ui.animate(step);
+ui.loop(step);
 seeThrough(ui, st => st.v > .05
   ? 'The motor turns the sprocket at the top. It pulls a chain loop: the steps ride up on top and come back underneath, upside down.'
   : 'Stopped: nobody is riding. The truss holds the chain loop; the motor at the top waits for the next person.');
