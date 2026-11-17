@@ -15,7 +15,7 @@ const BD = [0, 0, 56, 184, 3, 5];                         // board = the lower f
 const Z0 = 3, Z1 = 53, Y_BOT = 148, FLAT = 18, TAN = Math.tan(Math.PI/6), RUN = (Z1 - Z0) / TAN;
 const SPAN = 120, PITCH = 8;                              // step loop length and step depth
 const SX0 = 12, SX1 = 36.5;                               // step width (x)
-const GB = 10.5, GF = 39.5, DF = 41;                      // back glass, front glass, front cladding planes
+const GB = 10.5, GF = 39.5, DF = 41, DB = GB - 2.5;      // back glass, front glass, front and back cladding planes
 const END_T = 30, END_B = 150, NEWEL_R = 8.25;            // balustrade ends (y)
 const Zline = p => Z0 + Math.min(RUN, Math.max(0, p - FLAT)) * TAN;
 const Zy = y => Zline(Y_BOT - y);
@@ -56,7 +56,7 @@ function person(o){
 function stepSVG(p){
   const yf = Y_BOT - p, z = Zline(p), zLow = Zline(p - PITCH);
   let s = '';
-  if (z - zLow > .2){
+  if (z - zLow > .2 && vis([0,1,0])){
     s += shape([[SX0, yf + PITCH, zLow], [SX1, yf + PITCH, zLow], [SX1, yf + PITCH, z], [SX0, yf + PITCH, z]], RISER, .7);
     let c = ''; for (let x = SX0 + 2.5; x < SX1; x += 3) c += pd([[x, yf + PITCH + .05, zLow + .3], [x, yf + PITCH + .05, z - .3]], false);
     s += `<path d="${c}" fill="none" stroke="#565e61" stroke-width=".6"/>`;
@@ -92,27 +92,41 @@ function balustrade(x){
   s += `<path d="${r}" fill="none" stroke="#8a847a" stroke-width="1" stroke-dasharray="2.5 7" stroke-dashoffset="${f(-st.travel)}" stroke-linecap="round"/>`;
   return s;
 }
+// the side panel under the deck, on the side the viewer is on (SIDE)
 function cladding(m){
-  const top = sampleY(END_B, BLOCK[3], 40).map(y => [DF, y, Zy(y) + 1.5]);
-  const bot = sampleY(BLOCK[3], END_B, 40).map(y => [DF, y, Math.max(Z0, Zy(y) - 14)]);
-  let s = fill(pd([...top, ...bot]), tone([1,0,0], m));
+  const X = SIDE.cx, top = sampleY(END_B, BLOCK[3], 40).map(y => [X, y, Zy(y) + 1.5]);
+  const bot = sampleY(BLOCK[3], END_B, 40).map(y => [X, y, Math.max(Z0, Zy(y) - 14)]);
+  let s = fill(pd([...top, ...bot]), tone([SIDE.s,0,0], m));
   let seams = '';
-  for (const y of [126, 108, 90, 72, 54]) seams += pd([[DF + .05, y, Math.max(Z0, Zy(y) - 14)], [DF + .05, y, Zy(y) + 1.5]], false);
+  for (const y of [126, 108, 90, 72, 54]) seams += pd([[X + SIDE.s*.05, y, Math.max(Z0, Zy(y) - 14)], [X + SIDE.s*.05, y, Zy(y) + 1.5]], false);
   s += `<path d="${seams}" fill="none" stroke="${INK}" stroke-width=".7" opacity=".6"/>`;
   s += ink(pd([...top, ...bot]), 2);
   return s;
 }
 
-/* ---------- inside view: the working parts behind the front cladding ----------
-   Drawn as a cutaway just inside the cladding (planes x = DF - 1 .. DF - 4, in (u = y, v = z)):
+// the underside of the sloping run (seen from the upper floor's side, looking low)
+function soffit(m){
+  const n = [0, -TAN, -1]; if (!vis(n)) return '';
+  const ya = Y_BOT - FLAT - RUN, yb = Y_BOT - FLAT - 14/TAN;
+  return shape([[DB, ya, Z1 - 14], [DF, ya, Z1 - 14], [DF, yb, Z0], [DB, yb, Z0]], tone(n, CONC), 1.2);
+}
+
+/* ---------- which side the viewer is on ----------
+   The escalator is drawn in slabs along x and split at the upper floor (y = 28); the order of both follows the viewer.
+   SIDE = the cladding toward the viewer: the front one (x = DF) or the back one (x = DB); IX(k) = k units inside it. */
+let SIDE = { cx: DF, s: 1, cav: SX0 };
+const IX = k => SIDE.cx - SIDE.s*k;
+
+/* ---------- inside view: the working parts behind the cladding toward the viewer ----------
+   Drawn as a cutaway just inside the cladding (planes IX(1) .. IX(4), in (u = y, v = z)):
    the truss that carries everything, the step chain loop (the steps ride on its top run and come back upside down
    on the return run), the drive sprocket at the top and the motor that turns it. All of it moves with st.travel. */
 const CH_TOP = 2, CH_RET = 10, SPR_Y = 34, SPR_R = (CH_RET - CH_TOP) / 2;   // chain runs below the step line; sprocket at the top end
 const MOTOR = [18, 31, 38, 47, Z1 - 13.5, Z1 - 8];                   // drive motor box: x0 x1 y0 y1 z0 z1
 const cladUV = () => [...sampleY(END_B, BLOCK[3], 40).map(y => [y, Zy(y) + 1.5]), ...sampleY(BLOCK[3], END_B, 40).map(y => [y, Math.max(Z0, Zy(y) - 14)])];
 function truss(){
-  const X = PX(DF - 4), topC = y => Zy(y) - .8, botC = y => Math.max(Z0 + .3, Zy(y) - 13.4);
-  let s = fill(pd(on(PX(SX0), cladUV())), '#ddd6c6', 'opacity=".9"');                        // the cavity behind, pale so the parts read
+  const X = PX(IX(4)), topC = y => Zy(y) - .8, botC = y => Math.max(Z0 + .3, Zy(y) - 13.4);
+  let s = fill(pd(on(PX(SIDE.cav), cladUV())), '#ddd6c6', 'opacity=".9"');                        // the cavity behind, pale so the parts read
   const bar = (a, b, w = 1.5) => `<path d="${pd([X(a), X(b)], false)}" fill="none" stroke="${METAL.d}" stroke-width="${w}" stroke-linecap="round"/>`;
   let p = ''; const ys = sampleY(130, 46, 7);
   for (let i = 0; i < ys.length; i++){ const y = ys[i];
@@ -123,7 +137,7 @@ function truss(){
   return s + p;
 }
 function chainLoop(){
-  const X = PX(DF - 2);
+  const X = PX(IX(2));
   // the loop: top run from the sprocket down to the bottom, round under the floor, return run back up, round the sprocket
   const topRun = sampleY(SPR_Y, Y_BOT + 4, 50).map(y => [y, Zy(y) - CH_TOP]);
   const retRun = sampleY(Y_BOT + 4, SPR_Y, 50).map(y => [y, Zy(y) - CH_RET]);
@@ -136,12 +150,12 @@ function chainLoop(){
     const p = mod(-st.travel + i*PITCH + PITCH/2, SPAN), y = Y_BOT - p;
     if (y < SPR_Y + 3 || y > Y_BOT - 2) continue;
     const z = Zline(p) - CH_RET, z2 = Zline(p - PITCH + 1) - CH_RET;
-    s += shape(on(PX(DF - 3), [[y, z - .6], [y + PITCH - 1, z2 - .6], [y + PITCH - 1, z2 - 3.4], [y, z - 3.4]]), STEP_T.d, .6);
+    s += shape(on(PX(IX(3)), [[y, z - .6], [y + PITCH - 1, z2 - .6], [y + PITCH - 1, z2 - 3.4], [y, z - 3.4]]), STEP_T.d, .6);
   }
   return s;
 }
 function driveUnit(m){
-  const X = PX(DF - 1.5), cz = Z1 - CH_TOP - SPR_R, a0 = st.travel / SPR_R;
+  const X = PX(IX(1.5)), cz = Z1 - CH_TOP - SPR_R, a0 = st.travel / SPR_R;
   // motor and gearbox, with a belt up to the sprocket
   let s = box(...MOTOR, DARK, toneI, 1);
   for (let k = 1; k < 4; k++) s += line([[MOTOR[1] + .05, MOTOR[2] + k*2.2, MOTOR[4] + 1], [MOTOR[1] + .05, MOTOR[2] + k*2.2, MOTOR[5] - 1]], .6);
@@ -150,14 +164,14 @@ function driveUnit(m){
   s += shape(on(X, ellUV(my, mz, 1.8, 1.8, 14)), METAL.m, .8);
   // the sprocket: a toothed wheel turning with the chain
   const teeth = []; for (let i = 0; i < 24; i++){ const a = a0 + i/24*2*Math.PI, r = i % 2 ? SPR_R + .2 : SPR_R + 1.1; teeth.push([SPR_Y + r*Math.cos(a), cz + r*Math.sin(a)]); }
-  s += shape(on(PX(DF - 1), teeth), METAL.l, .9);
-  let sp = ''; for (let k = 0; k < 4; k++){ const a = a0 + k*Math.PI/2; sp += pd([PX(DF - .9)([SPR_Y, cz]), PX(DF - .9)([SPR_Y + (SPR_R - .6)*Math.cos(a), cz + (SPR_R - .6)*Math.sin(a)])], false); }
+  s += shape(on(PX(IX(1)), teeth), METAL.l, .9);
+  let sp = ''; for (let k = 0; k < 4; k++){ const a = a0 + k*Math.PI/2; sp += pd([PX(IX(.9))([SPR_Y, cz]), PX(IX(.9))([SPR_Y + (SPR_R - .6)*Math.cos(a), cz + (SPR_R - .6)*Math.sin(a)])], false); }
   s += `<path d="${sp}" fill="none" stroke="${METAL.d}" stroke-width="1" stroke-linecap="round"/>`;
-  s += shape(on(PX(DF - .85), ellUV(SPR_Y, cz, 1, 1, 10)), METAL.d, .6);
+  s += shape(on(PX(IX(.85)), ellUV(SPR_Y, cz, 1, 1, 10)), METAL.d, .6);
   return s;
 }
 function insideView(m){
-  return clipTo(on(PX(DF), cladUV()), truss() + chainLoop() + driveUnit(m));
+  return clipTo(on(PX(SIDE.cx), cladUV()), truss() + chainLoop() + driveUnit(m));
 }
 
 /* ---------- labels ---------- */
@@ -168,14 +182,14 @@ function labels(st){
     { at: [GF + .2, 70, Zy(70) + 18], text: 'HANDRAIL', on: run },
     { at: [GF, 112, Zy(112) + 10], text: 'GLASS BALUSTRADE', on: false },
     { at: [24, 148, Z0 + .6], text: 'COMB PLATE', on: false },
-    { at: [BLOCK[2] + .2, 14, 40], text: 'STATUS SIGN', on: false },
   ];
+  if (vis([1,0,0])) items.push({ at: [BLOCK[2] + .2, 14, 40], text: 'STATUS SIGN', on: false });
   if (xr) items.push(
-    { at: [DF - 1, SPR_Y, Z1 - CH_TOP - SPR_R], text: 'DRIVE SPROCKET', on: run },
+    { at: [IX(1), SPR_Y, Z1 - CH_TOP - SPR_R], text: 'DRIVE SPROCKET', on: run },
     { at: [MOTOR[1], (MOTOR[2] + MOTOR[3]) / 2, MOTOR[5]], text: 'DRIVE MOTOR', on: run },
-    { at: [DF - 2, 96, Zy(96) - CH_TOP], text: 'STEP CHAIN', on: run },
-    { at: [DF - 3, 80, Zy(80) - CH_RET - 2], text: 'RETURN STEPS', on: run },
-    { at: [DF - 4, 116, Zy(116) - 10], text: 'TRUSS', on: false });
+    { at: [IX(2), 96, Zy(96) - CH_TOP], text: 'STEP CHAIN', on: run },
+    { at: [IX(3), 80, Zy(80) - CH_RET - 2], text: 'RETURN STEPS', on: run },
+    { at: [IX(4), 116, Zy(116) - 10], text: 'TRUSS', on: false });
   return callouts(items, [0, BD[2], 0, BD[3], 0, 90]);
 }
 
@@ -185,7 +199,8 @@ function upperFloor(){
   let s = box(x0, y0, Z0, x1, y1, Z1, CONC, tone, 1.6);
   let t = ''; for (const y of [7, 14, 21]) t += pd([[x0 + 1, y, Z1 + .05], [x1 - 1, y, Z1 + .05]], false);
   s += `<path d="${t}" fill="none" stroke="${CONC.d}" stroke-width=".6"/>`;
-  // status sign on the front of the upper floor
+  // status sign on the front of the upper floor (only when that face is toward the viewer: its text would read backwards)
+  if (!vis([1,0,0])) return s;
   const run = st.v >= VMAX*.95, stopped = st.v < .05, col = stopped ? '#ff6b5e' : '#8af0ae';
   s += shape(on(PX(x1 + .15), rrUV(4, 30, 24, 46, 2)), '#1d2a26', 1.2);
   const word = st.dir !== st.dirT ? 'CHANGE' : stopped ? 'STOP' : run ? 'RUN' : 'SLOW';
@@ -194,38 +209,52 @@ function upperFloor(){
 }
 
 /* ---------- scene ---------- */
+// the upper floor's upright faces toward the viewer (from the upper side they hide whatever lies behind them)
+const blockSides = () => { const [x0, y0, x1, y1] = BLOCK, F = [
+  [[1,0,0],  [[x1,y0,Z0],[x1,y1,Z0],[x1,y1,Z1],[x1,y0,Z1]]], [[-1,0,0], [[x0,y0,Z0],[x0,y1,Z0],[x0,y1,Z1],[x0,y0,Z1]]],
+  [[0,1,0],  [[x0,y1,Z0],[x1,y1,Z0],[x1,y1,Z1],[x0,y1,Z1]]], [[0,-1,0], [[x0,y0,Z0],[x1,y0,Z0],[x1,y0,Z1],[x0,y0,Z1]]] ];
+  return F.filter(([n]) => vis(n)).map(([, q]) => q); };
 function scene(st, m){
-  const top = boardTop(...BD);
+  const front = camSide(0) >= 0, low = camSide(1) >= 0;      // viewer on the front (+x) side? on the bottom landing's (+y) side?
+  SIDE = front ? { cx: DF, s: 1, cav: SX0 } : { cx: DB, s: -1, cav: SX1 };
+  const top = boardTop(...BD), deckTop = tone([0,0,1], m);
   let s = board(...BD, BOARD);
   // shadows: upper floor + the escalator body
   const [x0, y0, x1, y1] = BLOCK;
   let sh = castShadow([[x0,y0,Z0],[x1,y0,Z0],[x1,y1,Z0],[x0,y1,Z0],[x0,y0,Z1],[x1,y0,Z1],[x1,y1,Z1],[x0,y1,Z1]], Z0);
   const body = [];
-  for (const y of sampleY(END_B, y1, 8)) for (const x of [GB - 2, DF]) body.push([x, y, Zy(y) + 18], [x, y, Z0]);
+  for (const y of sampleY(END_B, y1, 8)) for (const x of [DB, DF]) body.push([x, y, Zy(y) + 18], [x, y, Z0]);
   sh += castShadow(body, Z0);
   s += clipTo(top, sh);
-  // people on the lower floor between the board edge and the balustrade ends are drawn last
+  // people on the lower floor beyond the balustrade ends: nearest of all from the bottom landing's side, furthest from the other
   const near = st.people.filter(o => o.state !== 'ride' && o.y > END_B + 6);
   const mid = st.people.filter(o => !near.includes(o));
+  const nearPeople = byDepth(near.map(o => ({ at: [o.x, o.y, o.z], svg: person(o) })));
 
-  s += upperFloor();
-  s += deck(GB - 2.5, SX0, tone([0,0,1], m)) + balustrade(GB);
-  // steps from p = 0..120, back to front
+  // the body under the decks: the underside, then the cladding toward the viewer
+  // (see-through: the working parts, then the cladding fading over them)
+  let under = soffit(m);
+  const k = ease(st.xr || 0);
+  if (k > .01) under += `<g opacity="${f(k)}">${insideView(m)}</g>`;
+  under += k > .01 ? `<g opacity="${f(1 - .85*k)}">${cladding(m)}</g>` + `<g opacity="${f(.7*k)}">${ink(pd(on(PX(SIDE.cx), cladUV())), 2)}</g>` : cladding(m);
+
+  // the top: slabs along x, back to front, turned round when the viewer is behind
   const steps = [];
   for (let i = 0; i < SPAN / PITCH; i++){ const p = mod(st.travel + i*PITCH, SPAN); steps.push({ at: [24, Y_BOT - p + 4, Zline(p)], svg: stepSVG(p) }); }
-  s += byDepth(steps);
-  // comb plates at both landings
-  s += box(SX0 - 1, 140, Z0, SX1 + 1, 156, Z0 + .6, METAL, toneI, .9) + line([[SX0, 140, Z0 + .6], [SX1, 140, Z0 + .6]], 1.3);
-  s += box(SX0 - 1, BLOCK[3] - 6, Z1, SX1 + 1, 36, Z1 + .6, METAL, toneI, .9) + line([[SX0, 36, Z1 + .6], [SX1, 36, Z1 + .6]], 1.3);
-  s += byDepth(mid.map(o => ({ at: [o.x, o.y, o.z + 1], svg: person(o) })));
-  // skirt, front cladding, front balustrade
-  s += deck(SX1, GF - .6, METAL.l);
-  // see-through: the working parts inside, then the cladding fading over them
-  const k = ease(st.xr || 0);
-  if (k > .01) s += `<g opacity="${f(k)}">${insideView(m)}</g>`;
-  s += k > .01 ? `<g opacity="${f(1 - .85*k)}">${cladding(m)}</g>` + `<g opacity="${f(.7*k)}">${ink(pd(on(PX(DF), cladUV())), 2)}</g>` : cladding(m);
-  s += deck(GF - .6, DF, mix(tone([0,0,1], m), '#ffffff', .15)) + balustrade(GF);
-  s += byDepth(near.map(o => ({ at: [o.x, o.y, o.z], svg: person(o) })));
+  const slabs = [
+    deck(DB, SX0, deckTop) + balustrade(GB),
+    byDepth(steps)
+      // comb plates at both landings
+      + box(SX0 - 1, 140, Z0, SX1 + 1, 156, Z0 + .6, METAL, toneI, .9) + line([[SX0, 140, Z0 + .6], [SX1, 140, Z0 + .6]], 1.3)
+      + box(SX0 - 1, BLOCK[3] - 6, Z1, SX1 + 1, 36, Z1 + .6, METAL, toneI, .9) + line([[SX0, 36, Z1 + .6], [SX1, 36, Z1 + .6]], 1.3)
+      + byDepth(mid.map(o => ({ at: [o.x, o.y, o.z + 1], svg: person(o) }))),
+    deck(SX1, GF - .6, METAL.l) + deck(GF - .6, DF, mix(deckTop, '#ffffff', .15)) + balustrade(GF) ];
+  const upper = (front ? slabs : slabs.reverse()).join('');
+
+  // from the bottom landing's side the upper floor is furthest; from the other side it stands in front of the run below it,
+  // and only what rises above its top (newels, the top landing, people up there) shows over it
+  if (low) s += upperFloor() + under + upper + nearPeople;
+  else s += nearPeople + under + upperFloor() + clipOut(blockSides(), upper);
   return s + labels(st);
 }
 
@@ -300,7 +329,7 @@ function step(dt){
 let ui;
 ui = mountFigure({
   fig:'09', title:'Escalator', hint:'send people — it slows and stops when nobody rides, and wakes when someone comes',
-  size:[BD[2], BD[3], 90], palette:'cobalt', state:st,
+  size:[BD[2], BD[3], 90], palette:'cobalt', state:st, turnLimit:180,
   scene,
   readout: st => `${st.v.toFixed(1)}`,
   stats: st => [

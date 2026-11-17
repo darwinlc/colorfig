@@ -18,7 +18,7 @@ const BD = [0, 0, 56 + DX, 184, 3, 5];                    // board = the lower f
 const Z0 = 3, Z1 = 53, Y_BOT = 148, FLAT = 18, TAN = Math.tan(Math.PI/6), RUN = (Z1 - Z0) / TAN;
 const SPAN = 120, PITCH = 8;                              // step loop length and step depth
 const SX0 = 12, SX1 = 36.5;                               // step width (x) of the rear unit
-const GB = 10.5, GF = 39.5, DF = 41;                      // back glass, front glass, front cladding planes
+const GB = 10.5, GF = 39.5, DF = 41, DB = GB - 2.5;      // back glass, front glass, front and back cladding planes (rear unit)
 const END_T = 30, END_B = 150, NEWEL_R = 8.25;            // balustrade ends (y)
 const Zline = p => Z0 + Math.min(RUN, Math.max(0, p - FLAT)) * TAN;
 const Zy = y => Zline(Y_BOT - y);
@@ -64,7 +64,7 @@ function person(o){
 function stepSVG(p, ox){
   const yf = Y_BOT - p, z = Zline(p), zLow = Zline(p - PITCH), xa = SX0 + ox, xb = SX1 + ox;
   let s = '';
-  if (z - zLow > .2){
+  if (z - zLow > .2 && vis([0,1,0])){
     s += shape([[xa, yf + PITCH, zLow], [xb, yf + PITCH, zLow], [xb, yf + PITCH, z], [xa, yf + PITCH, z]], RISER, .7);
     let c = ''; for (let x = xa + 2.5; x < xb; x += 3) c += pd([[x, yf + PITCH + .05, zLow + .3], [x, yf + PITCH + .05, z - .3]], false);
     s += `<path d="${c}" fill="none" stroke="#565e61" stroke-width=".6"/>`;
@@ -105,15 +105,22 @@ function balustrade(x, u){
   s += `<path d="${r}" fill="none" stroke="#8a847a" stroke-width="1" stroke-dasharray="2.5 7" stroke-dashoffset="${f(-u.travel)}" stroke-linecap="round"/>`;
   return s;
 }
-function cladding(m, x){
+// a side panel under the deck at x, facing +x (sx = 1) or -x (sx = -1)
+function cladding(m, x, sx = 1){
   const top = sampleY(END_B, BLOCK[3], 40).map(y => [x, y, Zy(y) + 1.5]);
   const bot = sampleY(BLOCK[3], END_B, 40).map(y => [x, y, Math.max(Z0, Zy(y) - 14)]);
-  let s = fill(pd([...top, ...bot]), tone([1,0,0], m));
+  let s = fill(pd([...top, ...bot]), tone([sx,0,0], m));
   let seams = '';
-  for (const y of [126, 108, 90, 72, 54]) seams += pd([[x + .05, y, Math.max(Z0, Zy(y) - 14)], [x + .05, y, Zy(y) + 1.5]], false);
+  for (const y of [126, 108, 90, 72, 54]) seams += pd([[x + sx*.05, y, Math.max(Z0, Zy(y) - 14)], [x + sx*.05, y, Zy(y) + 1.5]], false);
   s += `<path d="${seams}" fill="none" stroke="${INK}" stroke-width=".7" opacity=".6"/>`;
   s += ink(pd([...top, ...bot]), 2);
   return s;
+}
+// the underside of a unit's sloping run (seen from the upper floor's side, looking low)
+function soffit(ox){
+  const n = [0, -TAN, -1]; if (!vis(n)) return '';
+  const ya = Y_BOT - FLAT - RUN, yb = Y_BOT - FLAT - 14/TAN;
+  return shape([[DB + ox, ya, Z1 - 14], [DF + ox, ya, Z1 - 14], [DF + ox, yb, Z0], [DB + ox, yb, Z0]], tone(n, CONC), 1.2);
 }
 // a yellow chevron painted on the floor, pointing the way the unit is carrying people
 function chevron(x, y, z, d){
@@ -133,15 +140,16 @@ function upperFloor(){
   let t = ''; for (const y of [7, 14, 21]) t += pd([[x0 + 1, y, Z1 + .05], [x1 - 1, y, Z1 + .05]], false);
   s += `<path d="${t}" fill="none" stroke="${CONC.d}" stroke-width=".6"/>`;
   for (const u of st.units) s += chevron(24.25 + u.ox, 9, Z1 + .05, u.dir);
-  // status sign on the front of the upper floor: one row per direction
+  // status sign on the front of the upper floor: one row per direction (only when that face is toward the viewer)
+  if (!vis([1,0,0])) return s;
   s += shape(on(PX(x1 + .15), rrUV(2, 27, 26, 46, 2)), '#1d2a26', 1.2);
   s += signRow(x1 + .25, 38.5, 'UP', goingUp()) + signRow(x1 + .25, 30.5, 'DOWN', goingDown());
   return s;
 }
 
 /* ---------- scene ---------- */
-function unitRun(u, i){
-  let s = skirtWall(SX0 + u.ox);
+function unitRun(u, i, front){
+  let s = skirtWall((front ? SX0 : SX1) + u.ox);                // the skirt on the far side of the steps
   // steps from p = 0..120, back to front
   const steps = [];
   for (let k = 0; k < SPAN / PITCH; k++){ const p = mod(u.travel + k*PITCH, SPAN); steps.push({ at: [24, Y_BOT - p + 4, Zline(p)], svg: stepSVG(p, u.ox) }); }
@@ -151,34 +159,52 @@ function unitRun(u, i){
   s += box(SX0 - 1 + u.ox, BLOCK[3] - 6, Z1, SX1 + 1 + u.ox, 36, Z1 + .6, METAL, toneI, .9) + line([[SX0 + u.ox, 36, Z1 + .6], [SX1 + u.ox, 36, Z1 + .6]], 1.3);
   return s;
 }
+// the upper floor's upright faces toward the viewer (from the upper side they hide whatever lies behind them)
+const blockSides = () => { const [x0, y0, x1, y1] = BLOCK, F = [
+  [[1,0,0],  [[x1,y0,Z0],[x1,y1,Z0],[x1,y1,Z1],[x1,y0,Z1]]], [[-1,0,0], [[x0,y0,Z0],[x0,y1,Z0],[x0,y1,Z1],[x0,y0,Z1]]],
+  [[0,1,0],  [[x0,y1,Z0],[x1,y1,Z0],[x1,y1,Z1],[x0,y1,Z1]]], [[0,-1,0], [[x0,y0,Z0],[x1,y0,Z0],[x1,y0,Z1],[x0,y0,Z1]]] ];
+  return F.filter(([n]) => vis(n)).map(([, q]) => q); };
+/* The pair is drawn in slabs along x and split at the upper floor (y = 28); the order of both follows the viewer. */
 function scene(st, m){
+  const front = camSide(0) >= 0, low = camSide(1) >= 0;      // viewer on the front (+x) side? on the bottom landing's (+y) side?
   const top = boardTop(...BD), [ua, ub] = st.units, deckTop = tone([0,0,1], m);
   let s = board(...BD, BOARD);
   // shadows: upper floor + the two escalator bodies
   const [x0, y0, x1, y1] = BLOCK;
   let sh = castShadow([[x0,y0,Z0],[x1,y0,Z0],[x1,y1,Z0],[x0,y1,Z0],[x0,y0,Z1],[x1,y0,Z1],[x1,y1,Z1],[x0,y1,Z1]], Z0);
   const body = [];
-  for (const y of sampleY(END_B, y1, 8)) for (const x of [GB - 2, DF + DX]) body.push([x, y, Zy(y) + 18], [x, y, Z0]);
+  for (const y of sampleY(END_B, y1, 8)) for (const x of [DB, DF + DX]) body.push([x, y, Zy(y) + 18], [x, y, Z0]);
   sh += castShadow(body, Z0);
   s += clipTo(top, sh);
   for (const u of st.units) s += chevron(24.25 + u.ox, 171, Z0 + .05, u.dir);
-  // people on the lower floor between the board edge and the balustrade ends are drawn last
+  // people on the lower floor beyond the balustrade ends: nearest of all from the bottom landing's side, furthest from the other
   const near = st.people.filter(o => o.state !== 'ride' && o.y > END_B + 6);
   const mid = i => st.people.filter(o => o.u === i && !near.includes(o));
   const crowd = i => byDepth(mid(i).map(o => ({ at: [o.x, o.y, o.z + 1], svg: person(o) })));
+  const nearPeople = byDepth(near.map(o => ({ at: [o.x, o.y, o.z], svg: person(o) })));
 
-  s += upperFloor();
-  s += cladding(m, DF);
-  // rear unit
-  s += deck(GB - 2.5, SX0, deckTop) + balustrade(GB, ua);
-  s += unitRun(ua, 0) + crowd(0);
-  // the deck shared between the two units, carrying a balustrade for each
-  s += deck(SX1, GF - .6, METAL.l) + deck(GF - .6, GB + DX + .6, deckTop) + deck(GB + DX + .6, SX0 + DX, METAL.l);
-  s += balustrade(GF, ua) + balustrade(GB + DX, ub);
-  // front unit
-  s += unitRun(ub, 1) + crowd(1);
-  s += deck(SX1 + DX, GF + DX - .6, METAL.l) + cladding(m, DF + DX) + deck(GF + DX - .6, DF + DX, mix(deckTop, '#ffffff', .15)) + balustrade(GF + DX, ub);
-  s += byDepth(near.map(o => ({ at: [o.x, o.y, o.z], svg: person(o) })));
+  // the bodies under the decks: the undersides, then the side panels toward the viewer, the far unit's first
+  // (it shows under the near unit's run)
+  let under = soffit(0) + soffit(DX);
+  under += front ? cladding(m, DF) + cladding(m, DF + DX) : cladding(m, DB + DX, -1) + cladding(m, DB, -1);
+
+  // the top: slabs along x, back to front, turned round when the viewer is behind
+  const slabs = [
+    // rear unit: its back deck and balustrade, then its run
+    deck(DB, SX0, deckTop) + balustrade(GB, ua),
+    unitRun(ua, 0, front) + crowd(0),
+    // the deck shared between the two units, carrying a balustrade for each
+    deck(SX1, GF - .6, METAL.l) + deck(GF - .6, GB + DX + .6, deckTop) + deck(GB + DX + .6, SX0 + DX, METAL.l)
+      + (front ? balustrade(GF, ua) + balustrade(GB + DX, ub) : balustrade(GB + DX, ub) + balustrade(GF, ua)),
+    // front unit: its run, then its front deck and balustrade
+    unitRun(ub, 1, front) + crowd(1),
+    deck(SX1 + DX, GF + DX - .6, METAL.l) + deck(GF + DX - .6, DF + DX, mix(deckTop, '#ffffff', .15)) + balustrade(GF + DX, ub) ];
+  const upper = (front ? slabs : slabs.reverse()).join('');
+
+  // from the bottom landing's side the upper floor is furthest; from the other side it stands in front of the runs below it,
+  // and only what rises above its top (newels, the top landings, people up there) shows over it
+  if (low) s += upperFloor() + under + upper + nearPeople;
+  else s += nearPeople + under + upperFloor() + clipOut(blockSides(), upper);
   return s;
 }
 
@@ -268,7 +294,7 @@ st.units.forEach(u => { for (const k of [3, 9]){ const o = spawn(sideOf(u.dirT))
 let ui;
 ui = mountFigure({
   fig:'09b', title:'Escalator pair', hint:'one goes up, one comes down — send people or swap the directions',
-  size:[BD[2], BD[3], 90], palette:'cobalt', state:st,
+  size:[BD[2], BD[3], 90], palette:'cobalt', state:st, turnLimit:180,
   scene,
   readout: st => st.units.map(u => u.v.toFixed(1)).join(' / '),
   stats: st => [

@@ -29,8 +29,10 @@ let OX = 0, OY = 0;
    (35.26 deg = true isometric). At the defaults P() is exactly the isometric projection every figure was drawn for.
    rotV(n) maps a world direction into the default view's frame, so vis / tone / any "sum of rotV > 0" test keep
    working at every angle: the viewer is always (1,1,1) and the light stays put relative to the viewer.
-   The figures here are drawn for the front (+x), left (+y) and top faces, so the camera turns at most CAM_LIM deg
-   either side of the front: within that the same three faces stay toward the viewer and every drawing order holds. */
+   Most figures are drawn for the front (+x), left (+y) and top faces, so the camera turns at most CAM_LIM deg
+   either side of the front: within that the same three faces stay toward the viewer and every drawing order holds.
+   A figure that orders its parts by where the viewer stands (CAM_V, see camSide) can pass turnLimit:180 to
+   mountFigure: then the camera goes all the way round. */
 let VIEW = 0, RC = [0, 0], RCZ = 0;
 const VIEW_NAMES = ['front', 'left side', 'back', 'right side'];
 const TURNS = [0, 2];
@@ -39,11 +41,15 @@ let CAM_YAW = CAM_YAW0, CAM_PITCH = CAM_PITCH0, CAM_R, CAM_U, CAM_V, CAM_D;     
 const camBasis = (yaw, pitch) => { const t = yaw*Math.PI/180, p = pitch*Math.PI/180, ct = Math.cos(t), st = Math.sin(t), cp = Math.cos(p), sp2 = Math.sin(p);
   return { R:[st,-ct,0], U:[-sp2*ct,-sp2*st,cp], V:[cp*ct,cp*st,sp2] }; };
 const CAM_B0 = camBasis(CAM_YAW0, CAM_PITCH0);
-let CAM_LIM = 40;                                                            // deg either side of the front view
-function setCam(yaw, pitch){ CAM_YAW = Math.max(CAM_YAW0 - CAM_LIM, Math.min(CAM_YAW0 + CAM_LIM, yaw)); CAM_PITCH = Math.max(15, Math.min(62, pitch));
+let CAM_LIM = 40;                                                            // deg either side of the front view (180 = all the way round)
+const camWrap = d => ((d + 180) % 360 + 360) % 360 - 180;                     // an angle as -180..180
+function setCam(yaw, pitch){ CAM_YAW = CAM_LIM >= 180 ? CAM_YAW0 + camWrap(yaw - CAM_YAW0) : Math.max(CAM_YAW0 - CAM_LIM, Math.min(CAM_YAW0 + CAM_LIM, yaw));
+  CAM_PITCH = Math.max(15, Math.min(62, pitch));
   const b = camBasis(CAM_YAW, CAM_PITCH); CAM_R = b.R; CAM_U = b.U; CAM_V = b.V; CAM_D = CAM_U.map(v => -v); }
 setCam(CAM_YAW0, CAM_PITCH0);
 const camDot = (a,b) => a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+// which side of the figure the viewer is on: camSide(0) > 0 = on the +x (front) side, camSide(1) > 0 = on the +y side
+const camSide = i => CAM_V[i];
 const rotV = n => { const r = camDot(n,CAM_R), u = camDot(n,CAM_U), v = camDot(n,CAM_V); return [0,1,2].map(i => CAM_B0.R[i]*r + CAM_B0.U[i]*u + CAM_B0.V[i]*v); };
 // the light's ground direction turns with the viewer's yaw only (shadows always fall toward the lower left of the screen)
 const yawTurn = ([x,y]) => { const t = (CAM_YAW - CAM_YAW0)*Math.PI/180, c = Math.cos(t), s = Math.sin(t); return [x*c - y*s, x*s + y*c]; };
@@ -200,6 +206,10 @@ function tag(p3, dx, dy, text, on=false){
     + `<text x="${f(cx)}" y="${f(cy+fs*.36)}" font-size="${f(fs)}" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-weight="800" letter-spacing=".04em" fill="${INK}">${text}</text></g>`;
 }
 const clipTo = (pts3, inner) => { const id = 'k' + (++_clipN); return `<clipPath id="${id}"><path d="${pd(pts3)}"/></clipPath><g clip-path="url(#${id})">${inner}</g>`; };
+// the opposite: draw inner everywhere except over these 3D outlines (faces that must stay in front of it; they may not overlap)
+const clipOut = (faces3, inner) => { if (!faces3.length) return inner; const id = 'k' + (++_clipN);
+  const d = 'M-99999 -99999H99999V99999H-99999Z' + faces3.map(q => pd(q)).join('');
+  return `<clipPath id="${id}"><path d="${d}" clip-rule="evenodd"/></clipPath><g clip-path="url(#${id})">${inner}</g>`; };
 
 /* ---------- constant on-screen line weight ----------
    Stroke widths are written in model units, and each figure is zoomed to fill the frame, so a small
@@ -324,7 +334,7 @@ function mountFigure(cfg){
   // The cast shadow is allowed to spill outside the frame (svg overflow is visible).
   const [W,D,H] = cfg.size, pts = [];
   OX = OY = 0; RC = cfg.center || [W/2, D/2]; RCZ = H/2;
-  VIEW = 0; setCam(CAM_YAW0, CAM_PITCH0);
+  VIEW = 0; CAM_LIM = cfg.turnLimit ?? 40; setCam(CAM_YAW0, CAM_PITCH0);
   for (const x of [0,W]) for (const y of [0,D]) for (const z of [0,H]) pts.push(P(x,y,z));
   const xs=pts.map(p=>p[0]), ys=pts.map(p=>p[1]);
   const bw = Math.max(...xs)-Math.min(...xs), bh = Math.max(...ys)-Math.min(...ys);
@@ -385,6 +395,7 @@ function mountFigure(cfg){
     ui._inv = requestAnimationFrame(go); ui._invT = setTimeout(go, 60); };
   let camAnim = 0, spin = false;
   const camTo = (y, p, ms=700) => { const y0 = CAM_YAW, p0 = CAM_PITCH, id = ++camAnim; let t = 0;
+    if (CAM_LIM >= 180) y = y0 + camWrap(y - y0);                              // all the way round: take the short way
     ui.animate(dt => { if (id !== camAnim) return false; t += dt*1000; const k = Math.min(1, t / ms), e = ease(k); setCam(y0 + (y - y0)*e, p0 + (p - p0)*e); return k < 1; }); };
   ui.camTo = camTo;
   if (cfg.turn !== false){
@@ -400,9 +411,9 @@ function mountFigure(cfg){
       if (!k || /input|textarea/i.test(e.target.tagName)) return; e.preventDefault(); camTo(CAM_YAW + k[0], CAM_PITCH + k[1], 260); });
     const vsp = document.getElementById('vspin');
     document.getElementById('vreset').onclick = () => { spin = false; vsp.setAttribute('aria-pressed', false); camTo(CAM_YAW0, CAM_PITCH0); };
-    vsp.onclick = () => { spin = !spin; vsp.setAttribute('aria-pressed', spin); camAnim++; let dir = 1;   // swings to and fro inside the limit
-      if (spin) ui.animate(dt => { if (!spin) return false; let y = CAM_YAW + dir*dt*16;
-        if (Math.abs(y - CAM_YAW0) >= CAM_LIM - .5){ dir = -dir; y = CAM_YAW + dir*dt*16; } setCam(y, CAM_PITCH); return true; }); };
+    vsp.onclick = () => { spin = !spin; vsp.setAttribute('aria-pressed', spin); camAnim++; let dir = 1;   // swings to and fro inside the limit, or goes round
+      if (spin) ui.animate(dt => { if (!spin) return false; let y = CAM_YAW + dir*dt*(CAM_LIM >= 180 ? 24 : 16);
+        if (CAM_LIM < 180 && Math.abs(y - CAM_YAW0) >= CAM_LIM - .5){ dir = -dir; y = CAM_YAW + dir*dt*16; } setCam(y, CAM_PITCH); return true; }); };
     if (q.has('yaw') || q.has('pitch')) setCam(+(q.get('yaw') ?? CAM_YAW0), +(q.get('pitch') ?? CAM_PITCH0));
   }
 
