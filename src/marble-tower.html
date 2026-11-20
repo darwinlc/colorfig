@@ -130,6 +130,9 @@ function ball(p, col){
     + `<circle cx="${f(X - r*.36)}" cy="${f(Y - r*.4)}" r="${f(r*.24)}" fill="#ffffff" opacity=".85"/>`;
 }
 const ballsIn = zone => st.balls.filter(b => b.p && b.zone === zone);
+// text on a plane x = const that reads left-to-right from whichever side of it the viewer is on
+const txFacing = (x, y, z, str, size, col = INK, weight = 700) => { const o = P(x, y, z), U = Dv(0, vis([1,0,0]) ? -1 : 1, 0);
+  return `<text transform="${txM(o, U, Dv(0,0,-1))}" font-size="${size}" fill="${col}" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-weight="${weight}" letter-spacing=".04em">${str}</text>`; };
 
 /* ---------- drawing: a U-shaped chute along a list of floor points, as short pieces for the painter's sort ---------- */
 function chuteItems(c){
@@ -156,7 +159,7 @@ function stackItems(x0, y0, x1, y1, z0, z1, k0 = 0, bh = 12){
   const items = [], n = Math.max(1, Math.round((z1 - z0) / bh));
   for (let i = 0; i < n; i++){ const za = z0 + (z1 - z0)*i/n, zb = z0 + (z1 - z0)*(i+1)/n, m = matOf(BLOCKS[(k0 + i) % BLOCKS.length]);
     let s = box(x0, y0, za, x1, y1, zb, m, tone, .9);
-    if (x1 - x0 > 6) s += shape(on(PX(x1 + .05), ellUV((y0 + y1)/2, (za + zb)/2, 1.6, 1.6, 14)), m.d, .7);   // the clip-together hole
+    if (x1 - x0 > 6) s += shape(on(PX(vis([1,0,0]) ? x1 + .05 : x0 - .05), ellUV((y0 + y1)/2, (za + zb)/2, 1.6, 1.6, 14)), m.d, .7);   // the clip-together hole, on the x face toward the viewer
     s += hullInk([[x0,y0,za],[x1,y0,za],[x1,y1,za],[x0,y1,za],[x0,y0,zb],[x1,y0,zb],[x1,y1,zb],[x0,y1,zb]], 1.6);
     items.push({ at: [(x0+x1)/2, (y0+y1)/2, (za+zb)/2], svg: s });
   }
@@ -204,9 +207,11 @@ function gateSvg(){
   s += rod(base, [34, 52 + sd*4.2, z1 + 5.6], .9, METAL, toneI, .9);
   s += cyl(34, 52 + sd*4.2, z1 + 5.2, z1 + 7.2, 1.6, matOf('#f2c230'), toneI, .9);
   // sign on a pin: which way it is set
-  s += rod([x1 - 1.2, y1 - 1.2, z1], [x1 - 1.2, y1 - 1.2, z1 + 9], .5, METAL, toneI, .7);
-  s += shape(on(PX(x1 - .8), rrUV(y0 - 3, z1 + 8, y1 + 3, z1 + 15.5, 1.4)), '#fff4d6', 1.1);
-  s += tx(x1 - .7, (y0 + y1)/2, z1 + 10.2, st.gate === 'spiral' ? 'SPIRAL' : 'ZIGZAG', 3.9, INK, 800);
+  // (the sign is double-sided: its face toward the viewer is drawn, so it reads the right way from the back too)
+  const fr = vis([1,0,0]), sx = fr ? x1 - 1.2 : x0 + 1.2, sy = fr ? y1 - 1.2 : y0 + 1.2;
+  s += rod([sx, sy, z1], [sx, sy, z1 + 9], .5, METAL, toneI, .7);
+  s += shape(on(PX(sx + (fr ? .4 : -.4)), rrUV(y0 - 3, z1 + 8, y1 + 3, z1 + 15.5, 1.4)), '#fff4d6', 1.1);
+  s += txFacing(sx + (fr ? .5 : -.5), (y0 + y1)/2, z1 + 10.2, st.gate === 'spiral' ? 'SPIRAL' : 'ZIGZAG', 3.9, INK, 800);
   return act('gate', s);
 }
 
@@ -275,7 +280,7 @@ function scene(st, m){
   items.push({ at: [34, 52, GATE[4] + 3], svg: gateSvg() });
   items.push(...launcherItems());
   // the hole the marbles leave tower 1 by
-  items.push({ at: [T1[2], 52, 81], svg: shape(on(PX(T1[2] + .06), ellUV(52, 81.4, 2.6, 2.6, 16)), '#2a2522', .8) });
+  if (vis([1,0,0])) items.push({ at: [T1[2], 52, 81], svg: shape(on(PX(T1[2] + .06), ellUV(52, 81.4, 2.6, 2.6, 16)), '#2a2522', .8) });
   for (const b of st.balls) if (b.p && !b.zone && b.mode !== 'cup' && b.mode !== 'load') items.push({ at: [b.p[0], b.p[1], b.p[2] + .4], svg: ball(b.p, b.col) });
   s += byDepth(items);
   return s + labels();
@@ -338,7 +343,7 @@ function setAuto(on){
 let ui;
 ui = mountFigure({
   fig:'13', title:'Marble tower', hint:'launch marbles and pick their way down',
-  size:[BASE[2], BASE[3], 104], palette:'cobalt', state:st,
+  size:[BASE[2], BASE[3], 104], palette:'cobalt', state:st, turnLimit:180,
   scene,
   readout: st => `${st.runs} runs`,
   stats: st => [

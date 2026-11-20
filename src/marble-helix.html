@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Marble helix</title>
+</head>
+<body>
+<script src="core.js"></script>
+<script>
+/* ---------- a second toy marble run on the same clip-together base plates (x = depth, y = width, z = up; 1 unit ~ 5 mm) ----------
+   The loop, and where each marble is at every step:
+     return tray -> rolls into the foot of the screw lift -> the turning screw carries it up the clear tube ->
+     out over the top onto the green chute -> twice round the helix that winds down the centre tower ->
+     red chute into the switch gate, which sends it one of two ways:
+       BOWL:  purple chute -> round and round the wobble bowl -> down its pipe -> orange chute -> tray
+       STEPS: down a staircase of six short chutes, dropping from each lip onto the next -> orange chute -> tray
+     and in the tray it rolls back down to the lift. Six marbles go round; none is added or removed. */
+const BASE = [0, 0, 64, 96, 3, 3];
+const ZB = BASE[4];
+const MR = 1.8;
+const LIFT = { x:57, y:9, z0:ZB, z1:93, r:3.6, pitch:5 };          // clear tube with a screw inside
+const HX = { x:24, y:30, r:11, z0:86, z1:45, turns:2 };           // helix round the centre tower
+const CORE = [21, 27, 27, 33], CORE_TOP = 88;                      // centre tower (x0 y0 x1 y1)
+const GATE = [31, 44, 39, 52, 36, 43];                             // switch gate box (x0 y0 x1 y1 z0 z1)
+const BOWL = { x:14, y:70, rim:31, neck:21, R:11, r:2.6, col:'#e2473a' };
+const PIPE = { x:BOWL.x, y:BOWL.y, z0:12, z1:BOWL.neck, r:3 };
+const TRAY_X = 57, TRAY_Y0 = 92, TRAY_Y1 = 15, TRAY_Z0 = 9.8, TRAY_Z1 = 7.6;
+const trayZ = y => TRAY_Z1 + (TRAY_Z0 - TRAY_Z1) * (y - TRAY_Y1) / (TRAY_Y0 - TRAY_Y1);
+const BLOCKS = ['#f08a2b', '#2fb3a8', '#8c4bd1', '#e2473a', '#3e86d9', '#f2c230'];
+const MARBLES = ['#e2473a', '#f2b431', '#43c25c', '#3e86d9', '#8c4bd1', '#f08a2b'];
+const STEP_COLS = ['#e2473a', '#f08a2b', '#f2c230', '#43c25c', '#3e86d9', '#8c4bd1'];
+
+/* ---------- small helpers ---------- */
+const add3 = (a, b, k = 1) => [a[0] + b[0]*k, a[1] + b[1]*k, a[2] + b[2]*k];
+const lerp3 = (a, b, t) => [a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t, a[2] + (b[2]-a[2])*t];
+const dist3 = (a, b) => Math.hypot(a[0]-b[0], a[1]-b[1], a[2]-b[2]);
+function seg(a, b, step = 2.5){ const n = Math.max(1, Math.round(dist3(a, b) / step)); return Array.from({ length: n + 1 }, (_, i) => lerp3(a, b, i / n)); }
+function spline(c, step = 2.5){
+  const out = [c[0]];
+  for (let i = 0; i < c.length - 1; i++){
+    const p0 = c[Math.max(0, i-1)], p1 = c[i], p2 = c[i+1], p3 = c[Math.min(c.length-1, i+2)];
+    const n = Math.max(2, Math.round(dist3(p1, p2) / step));
+    for (let k = 1; k <= n; k++){ const t = k/n, t2 = t*t, t3 = t2*t;
+      out.push([0,1,2].map(j => .5*((2*p1[j]) + (-p0[j]+p2[j])*t + (2*p0[j]-5*p1[j]+4*p2[j]-p3[j])*t2 + (-p0[j]+3*p1[j]-3*p2[j]+p3[j])*t3))); }
+  }
+  return out;
+}
+const join = (...parts) => parts.reduce((o, p) => o.concat(o.length ? p.slice(1) : p), []);
+const coneZ = (F, rho) => F.neck + (F.rim - F.neck) * (rho - F.r) / (F.R - F.r);
+function spiralPath(F, a0, turns, rho0, rho1, n){
+  return Array.from({ length: n + 1 }, (_, i) => { const t = i/n, a = a0 + turns*2*Math.PI*t, rho = rho0 + (rho1 - rho0)*Math.pow(t, .8);
+    return [F.x + rho*Math.cos(a), F.y + rho*Math.sin(a), coneZ(F, rho) + MR*1.15]; });
+}
+// the helix chute floor: from angle 0 (heading +y) round `turns` times, falling from z0 to z1
+const helixAt = t => { const a = t*HX.turns*2*Math.PI; return [HX.x + HX.r*Math.cos(a), HX.y + HX.r*Math.sin(a), HX.z0 + (HX.z1 - HX.z0)*t]; };
+const helixPts = n => Array.from({ length: n + 1 }, (_, i) => helixAt(i/n));
+// text on a plane x = const that reads left-to-right from whichever side of it the viewer is on
+const txFacing = (x, y, z, str, size, col = INK, weight = 700) => { const o = P(x, y, z), U = Dv(0, vis([1,0,0]) ? -1 : 1, 0);
+  return `<text transform="${txM(o, U, Dv(0,0,-1))}" font-size="${size}" fill="${col}" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-weight="${weight}" letter-spacing=".04em">${str}</text>`; };
+
+/* ---------- the tracks (chute floors) ---------- */
+const C_TOP = join(spline([[53.8, 9.4, 89.8], [45, 10.6, 88.9], [38.5, 15, 88], [35.4, 22, 87], [HX.x + HX.r, HX.y, HX.z0]]), helixPts(72));   // green: lift -> helix
+const HX_END = helixAt(1);
+const C_IN = seg(HX_END, [35, 43.6, 43.2]);                                                   // red: helix -> gate
+const B_A = -53 * Math.PI/180;                                                                // where the purple chute comes over the bowl's rim
+const C_BOWL = spline([[30.6, 48, 40.6], [27, 52.5, 37.6], [23, 57.5, 34.4], [BOWL.x + 11.2*Math.cos(B_A), BOWL.y + 11.2*Math.sin(B_A), BOWL.rim + 1.4]]);
+const E_BOWL = spline([[PIPE.x + 1.5, PIPE.y, 11.2], [25, 69, 10.6], [35, 68, 10], [45, 70, 9.5], [54.4, 72, 9.1]]);   // orange: bowl pipe -> tray
+// the staircase: six short chutes along x = 35, each one's lip just over the next one's floor
+const STEPS = Array.from({ length: 6 }, (_, i) => { const y = 52.5 + 6.2*i, z = 40.6 - 5*i; return { a: [35, y, z], b: [35, y + 7, z - 1], col: STEP_COLS[i] }; });
+const stepFloorZ = (k, y) => { const s = STEPS[k]; return s.a[2] - (y - s.a[1]) / 7; };
+const E_STEPS = spline([[35, 89.6, 10.8], [40, 92, 10.5], [48, 92.2, 10.2], [54.4, 91, 9.9]]);   // orange: last step -> tray
+const TRAY = seg([TRAY_X, TRAY_Y0, TRAY_Z0], [TRAY_X, TRAY_Y1, TRAY_Z1], 3);
+const CHUTES = [
+  { pts: C_TOP, col: '#43c25c' }, { pts: C_IN, col: '#e2473a' }, { pts: C_BOWL, col: '#8c4bd1' },
+  { pts: E_BOWL, col: '#f08a2b' }, { pts: E_STEPS, col: '#f08a2b' },
+  ...STEPS.map(s => ({ pts: seg(s.a, s.b, 1.75), col: s.col })),
+  { pts: TRAY, col: '#76a0e2', w: 7.4, h: 2.8 },
+];
+const up = pts => pts.map(p => [p[0], p[1], p[2] + MR]);
+
+/* ---------- the marble routes ---------- */
+function route(...legs){
+  const pts = [];
+  for (const { p, v0, v1 = v0, zone = null } of legs) p.forEach((q, i) => { if (pts.length && i === 0) return; pts.push({ p: q, v: v0 + (v1 - v0) * i / Math.max(1, p.length - 1), zone }); });
+  let s = 0; pts.forEach((q, i) => { if (i) s += dist3(pts[i-1].p, q.p); q.s = s; });
+  return { pts, len: s };
+}
+const slotY = k => TRAY_Y1 + 2 + 3.9*k;
+const trayBall = y => [TRAY_X, y, trayZ(y) + MR];
+const LIFT_BOT = [LIFT.x, LIFT.y, LIFT.z0 + MR + .6], LIFT_TOP = [LIFT.x, LIFT.y, 91];
+const LIFT_V = 13;                                                                   // units/s up the tube (pitch x turns/s)
+const R_COMMON = route(
+  { p: [trayBall(slotY(0)), [LIFT.x, LIFT.y + LIFT.r - .4, LIFT_BOT[2] + .4], LIFT_BOT], v0: 9 },
+  { p: [LIFT_BOT, LIFT_TOP], v0: LIFT_V, zone: 'L' },
+  { p: [LIFT_TOP, [LIFT.x - 2.2, LIFT.y + .2, 91.4], up(C_TOP)[0]], v0: 8 },
+  { p: up(C_TOP), v0: 20, v1: 34 },
+  { p: up(C_IN), v0: 26 },
+  { p: [up(C_IN)[C_IN.length - 1], [35, 48, 41.6]], v0: 16, zone: 'hide' });
+const LIFT_END = R_COMMON.pts.find(q => q.zone === 'L' && q.p[2] >= 90.9).s;     // how far along the route the lift ends
+const R_BOWL = route(
+  { p: [[35, 48, 41.6], [30.6, 48, 40.6 + MR]], v0: 16, zone: 'hide' },
+  { p: up(C_BOWL), v0: 24 },
+  { p: spiralPath(BOWL, B_A, 2.2, BOWL.R - 2.3, BOWL.r + .3, 60), v0: 26, v1: 58, zone: 'F' },
+  { p: [[BOWL.x, BOWL.y, BOWL.neck + MR], [PIPE.x, PIPE.y, PIPE.z0 + MR]], v0: 55, zone: 'P' },
+  { p: up(E_BOWL), v0: 30 });
+const stepLegs = [];
+STEPS.forEach((s, k) => {
+  const from = k === 0 ? s.a : [35, s.a[1] + 2.3, stepFloorZ(k, s.a[1] + 2.3)];
+  stepLegs.push({ p: up(seg(from, s.b, 1.5)), v0: 12, v1: 17 });
+  // off the lip: a short fall onto the next step (or onto the orange chute after the last one)
+  const land = k < 5 ? [35, s.b[1] + 1.8, stepFloorZ(k + 1, s.b[1] + 1.8)] : E_STEPS[1];
+  stepLegs.push({ p: [up([s.b])[0], [35, s.b[1] + 1.1, s.b[2] + MR - 1.2], up([land])[0]], v0: 24 });
+});
+const R_STEPS = route(
+  { p: [[35, 48, 41.6], [35, 52.4, 40.6 + MR]], v0: 16, zone: 'hide' },
+  ...stepLegs,
+  { p: up(E_STEPS.slice(1)), v0: 26 });
+const ROUTES = { common: R_COMMON, bowl: R_BOWL, steps: R_STEPS };
+const ENTRY_Y = { bowl: 72, steps: 91 };
+function at(rt, s){
+  const P_ = rt.pts; let i = 1; while (i < P_.length - 1 && P_[i].s < s) i++;
+  const a = P_[i-1], b = P_[i], t = Math.max(0, Math.min(1, (s - a.s) / Math.max(1e-6, b.s - a.s)));
+  return { p: lerp3(a.p, b.p, t), v: a.v + (b.v - a.v)*t, zone: t < .5 ? a.zone : b.zone };
+}
+
+/* ---------- state ---------- */
+const st = { pal:'cobalt', gate:'steps', motor:false, pending:0, screw:0, runs:0,
+  balls: MARBLES.map((col, i) => ({ id:i, col, mode:'queue', y: slotY(i), s:0, rt:'common', p:null, zone:null })) };
+const queue = () => st.balls.filter(b => b.mode === 'queue').sort((a, b) => a.y - b.y);
+const inLift = () => st.balls.filter(b => b.mode === 'run' && b.rt === 'common' && b.s < LIFT_END);
+
+/* ---------- drawing: marbles ---------- */
+function ball(p, col){
+  const [X, Y] = P(...p), r = MR*1.2247;
+  return `<circle cx="${f(X)}" cy="${f(Y)}" r="${f(r)}" fill="${mix(col, '#000000', .18)}" stroke="${INK}" stroke-width=".9"/>`
+    + `<circle cx="${f(X - r*.12)}" cy="${f(Y - r*.14)}" r="${f(r*.72)}" fill="${col}"/>`
+    + `<circle cx="${f(X - r*.36)}" cy="${f(Y - r*.4)}" r="${f(r*.24)}" fill="#ffffff" opacity=".85"/>`;
+}
+const ballsIn = zone => st.balls.filter(b => b.p && b.zone === zone);
+
+/* ---------- drawing: a U-shaped chute, as short pieces for the painter's sort ---------- */
+function chuteItems(c){
+  const m = matOf(c.col), w = (c.w || 5.6)/2, h = c.h || 2.2, items = [], P_ = c.pts;
+  const left = P_.map((_, i) => { const a = P_[Math.max(0, i-1)], b = P_[Math.min(P_.length-1, i+1)], dx = b[0]-a[0], dy = b[1]-a[1], l = Math.hypot(dx, dy) || 1; return [-dy/l, dx/l, 0]; });
+  for (let i = 0; i < P_.length - 1; i++){
+    const a = P_[i], b = P_[i+1], dx = b[0]-a[0], dy = b[1]-a[1], l = Math.hypot(dx, dy) || 1;
+    const sg = vis([-dy/l, dx/l, 0]) ? 1 : -1, n = [-dy/l*sg, dx/l*sg, 0];
+    const aN = add3(a, left[i], w*sg), bN = add3(b, left[i+1], w*sg), aF = add3(a, left[i], -w*sg), bF = add3(b, left[i+1], -w*sg), Z = [0, 0, h];
+    let s = shape([aF, bF, bN, aN], mix(m.l, '#ffffff', .15), 0);
+    s += face(pd([aF, bF, add3(bF, Z), add3(aF, Z)]), m.m);
+    s += face(pd([aN, bN, add3(bN, Z), add3(aN, Z)]), tone(n, m) === m.l ? m.l : m.m);
+    s += line([add3(aF, Z), add3(bF, Z)], .9) + line([aN, bN], 1.1) + line([add3(aN, Z), add3(bN, Z)], 1.1);
+    if (i === 0) s += line([aF, add3(aF, Z), add3(aN, Z), aN], .9);
+    if (i === P_.length - 2) s += line([bF, add3(bF, Z), add3(bN, Z), bN], .9);
+    items.push({ at: [(a[0]+b[0])/2, (a[1]+b[1])/2, (a[2]+b[2])/2 + .6], svg: s });
+  }
+  return items;
+}
+
+/* ---------- drawing: towers and posts as stacks of blocks ---------- */
+function stackItems(x0, y0, x1, y1, z0, z1, k0 = 0, bh = 12){
+  const items = [], n = Math.max(1, Math.round((z1 - z0) / bh));
+  for (let i = 0; i < n; i++){ const za = z0 + (z1 - z0)*i/n, zb = z0 + (z1 - z0)*(i+1)/n, m = matOf(BLOCKS[(k0 + i) % BLOCKS.length]);
+    let s = box(x0, y0, za, x1, y1, zb, m, tone, .9);
+    if (x1 - x0 > 5) s += shape(on(PX(vis([1,0,0]) ? x1 + .05 : x0 - .05), ellUV((y0 + y1)/2, (za + zb)/2, 1.5, 1.5, 14)), m.d, .7);
+    s += hullInk([[x0,y0,za],[x1,y0,za],[x1,y1,za],[x0,y1,za],[x0,y0,zb],[x1,y0,zb],[x1,y1,zb],[x0,y1,zb]], 1.6);
+    items.push({ at: [(x0+x1)/2, (y0+y1)/2, (za+zb)/2], svg: s });
+  }
+  return items;
+}
+
+/* ---------- drawing: the wobble bowl (a wide funnel) ---------- */
+function bowlSvg(F){
+  const m = matOf(F.col), N = 36;
+  const A = on(PZ(F.neck), ellUV(F.x, F.y, F.r, F.r, N)), B = on(PZ(F.rim), ellUV(F.x, F.y, F.R, F.R, N));
+  let s = cyl(F.x, F.y, F.neck - 3, F.neck + .2, F.r + 1, m, toneI, 1);
+  for (let i = 0; i < N; i++){ const j = (i+1) % N, a = (i + .5)/N*2*Math.PI, h = [Math.cos(a), Math.sin(a), 0];
+    s += face(pd([A[i], A[j], B[j], B[i]]), mix(toneI(h.map(v => -v), m), '#ffffff', .12)); }
+  const g = spiralPath(F, B_A, 2.2, F.R - 2.3, F.r + .3, 80).map(p => [p[0], p[1], p[2] - MR*1.1]);
+  s += `<path d="${pd(g, false)}" fill="none" stroke="${mix(F.col, '#ffffff', .55)}" stroke-width="1.3" stroke-linecap="round"/>`;
+  s += ink(pd(A), .8);
+  for (const b of ballsIn('F')) s += ball(b.p, b.col);
+  for (let i = 0; i < N; i++){ const j = (i+1) % N, a = (i + .5)/N*2*Math.PI, h = [Math.cos(a), Math.sin(a), 0];
+    if (vis(h)) s += face(pd([A[i], A[j], B[j], B[i]]), tone(h, m)); }
+  s += ink(pd(B), 1.5) + hullInk([...A, ...B], 2.2);
+  return s;
+}
+
+/* ---------- drawing: a clear tube; for the lift, with the turning screw inside ---------- */
+function tubeSvg(T, zone, screw){
+  const A = on(PZ(T.z0), ellUV(T.x, T.y, T.r, T.r, 20)), B = on(PZ(T.z1), ellUV(T.x, T.y, T.r, T.r, 20));
+  const hull2 = sp(hull([...A, ...B].map(p => P(...p))));
+  let s = `<path d="${hull2}" fill="#cfe9f0" opacity=".35"/>`;
+  let front = '';
+  if (screw){
+    // the thread: one point every 20 deg; the half behind the axis is drawn before the marbles, the near half after
+    const c0 = depthOf([T.x, T.y, 0]), back = [], near = [];
+    let run = [], side = null;
+    for (let z = T.z0 + 1.5; z <= T.z1 - 1; z += T.pitch / 18){
+      const a = 2*Math.PI*z/T.pitch - st.screw, p = [T.x + (T.r - .6)*Math.cos(a), T.y + (T.r - .6)*Math.sin(a), z];
+      const sd = depthOf([p[0], p[1], 0]) > c0;
+      if (sd !== side && run.length){ (side ? near : back).push(run); run = [run[run.length - 1]]; }
+      side = sd; run.push(p);
+    }
+    if (run.length) (side ? near : back).push(run);
+    const path = runs => runs.map(r => pd(r, false)).join('');
+    s += `<path d="${path(back)}" fill="none" stroke="#8fb4bd" stroke-width="1.1" stroke-linecap="round"/>`;
+    s += rod([T.x, T.y, T.z0 + 1], [T.x, T.y, T.z1 - 1], .7, METAL, toneI, .6);
+    front = `<path d="${path(near)}" fill="none" stroke="#e8f6f8" stroke-width="2.6" stroke-linecap="round"/>`
+          + `<path d="${path(near)}" fill="none" stroke="${INK}" stroke-width=".8" stroke-linecap="round"/>`;
+  }
+  for (const b of ballsIn(zone)) s += ball(b.p, b.col);
+  s += front;
+  s += `<path d="${hull2}" fill="#cfe9f0" opacity=".25"/>`;
+  s += ink(pd(B), .9) + ink(hull2, 1.2);
+  return s;
+}
+
+/* ---------- drawing: the lift's motor housing and the cap on the tube ---------- */
+function motorItems(){
+  const m = matOf('#3e86d9'), [x0, y0, x1, y1, z1] = [50.5, 1.2, 56, 5.2, 11];
+  let s = box(x0, y0, ZB, x1, y1, z1, m, tone, .9);
+  s += hullInk([[x0,y0,ZB],[x1,y0,ZB],[x1,y1,ZB],[x0,y1,ZB],[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]], 1.6);
+  // a pulley on top that turns with the screw
+  const a = -st.screw, c = [53.25, 3.2, z1];
+  s += cyl(c[0], c[1], z1, z1 + 1.4, 1.9, matOf('#f2c230'), toneI, .9);
+  s += line([[c[0], c[1], z1 + 1.45], [c[0] + 1.6*Math.cos(a), c[1] + 1.6*Math.sin(a), z1 + 1.45]], 1);
+  const lamp = st.motor || st.pending > 0 || inLift().length;
+  s += cyl(51.6, 4.3, z1, z1 + .8, .7, lamp ? matOf('#7be07b') : DARK, toneI, .6);
+  const cap = cyl(LIFT.x, LIFT.y, LIFT.z1, LIFT.z1 + 1.6, LIFT.r + .7, matOf('#2fb3a8'), toneI, 1);
+  const collar = cyl(LIFT.x, LIFT.y, ZB, ZB + 2.4, LIFT.r + .8, matOf('#2fb3a8'), toneI, 1);
+  return [
+    { at: [(x0 + x1)/2, (y0 + y1)/2, (ZB + z1)/2], svg: act('lift', s) },
+    { at: [LIFT.x, LIFT.y, ZB + 1], svg: collar },
+    { at: [LIFT.x, LIFT.y, LIFT.z1 + 1], svg: cap },
+  ];
+}
+
+/* ---------- drawing: the switch gate ---------- */
+function gateSvg(){
+  const [x0, y0, x1, y1, z0, z1] = GATE, m = matOf('#8c4bd1');
+  let s = box(x0, y0, z0, x1, y1, z1, m, tone, .9);
+  s += hullInk([[x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0],[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]], 1.8);
+  // the lever leans toward the way it sends marbles: BOWL toward -x, STEPS toward +y
+  const base = [35, 48, z1], tip = st.gate === 'bowl' ? [35 - 4.2, 48, z1 + 5.6] : [35, 48 + 4.2, z1 + 5.6];
+  s += rod(base, tip, .9, METAL, toneI, .9);
+  s += cyl(tip[0], tip[1], tip[2] - .4, tip[2] + 1.6, 1.6, matOf('#f2c230'), toneI, .9);
+  // a double-sided sign on a pin at the corner toward the viewer
+  const fr = vis([1,0,0]), sx = fr ? x1 - 1.2 : x0 + 1.2, sy = y1 - 1.2;
+  s += rod([sx, sy, z1], [sx, sy, z1 + 9], .5, METAL, toneI, .7);
+  s += shape(on(PX(sx + (fr ? .4 : -.4)), rrUV(y0 + 1, z1 + 8, y1 + 4, z1 + 15.5, 1.4)), '#fff4d6', 1.1);
+  s += txFacing(sx + (fr ? .5 : -.5), (y0 + y1 + 5)/2, z1 + 10.2, st.gate === 'bowl' ? 'BOWL' : 'STEPS', 3.9, INK, 800);
+  return act('gate', s);
+}
+
+/* ---------- labels ---------- */
+function labels(){
+  const on = z => st.balls.some(b => b.zone === z);
+  const onSteps = st.balls.some(b => b.mode === 'run' && b.rt === 'steps');
+  const onHelix = st.balls.some(b => b.mode === 'run' && b.rt === 'common' && b.s > LIFT_END + 20);
+  return callouts([
+    { at: [LIFT.x, LIFT.y, 70], text: 'SCREW LIFT', on: on('L') },
+    { at: helixAt(.62), text: 'HELIX', on: onHelix },
+    { at: [GATE[0], GATE[1], GATE[5] + 11], text: 'SWITCH GATE', on: false },
+    { at: [BOWL.x - BOWL.R*.7, BOWL.y + BOWL.R*.7, BOWL.rim], text: 'WOBBLE BOWL', on: on('F') },
+    { at: [35, 74, 27], text: 'STEPS', on: onSteps },
+    { at: [TRAY_X + 3.7, 50, trayZ(50) + 2], text: 'RETURN TRAY', on: false },
+  ], [0, BASE[2], 0, BASE[3], 0, 100]);
+}
+
+/* ---------- scene ---------- */
+function scene(st, m){
+  let s = board(BASE[0], BASE[1], BASE[2], BASE[3], ZB, BASE[5], { l:'#f6f4ee', m:'#dcd8cd', d:'#b7b2a5' });
+  let seams = '';
+  for (let x = 16; x < BASE[2]; x += 16) seams += pd([[x, 1, ZB + .05], [x, BASE[3] - 1, ZB + .05]], false);
+  for (let y = 16; y < BASE[3]; y += 16) seams += pd([[1, y, ZB + .05], [BASE[2] - 1, y, ZB + .05]], false);
+  s += `<path d="${seams}" fill="none" stroke="#b7b2a5" stroke-width="1"/>`;
+  for (let x = 8; x < BASE[2]; x += 16) for (let y = 8; y < BASE[3]; y += 16) s += shape(on(PZ(ZB + .06), ellUV(x, y, 2, 2, 14)), '#e9e6de', .5);
+  // cast shadows of the tall parts, clipped to the base
+  const bx = (x0, y0, x1, y1, z0, z1) => [[x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0],[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]];
+  const ring = (F, z, r) => on(PZ(z), ellUV(F.x, F.y, r, r, 16));
+  let sh = castShadow([...bx(CORE[0], CORE[1], CORE[2], CORE[3], ZB, CORE_TOP), ...ring(HX, HX.z0, HX.r + 2.8)], ZB);
+  sh += castShadow(bx(GATE[0], GATE[1], GATE[2], GATE[3], ZB, GATE[5]), ZB);
+  sh += castShadow([...ring(BOWL, BOWL.rim, BOWL.R), ...ring(BOWL, ZB, PIPE.r)], ZB);
+  sh += castShadow(bx(43, 8.6, 47, 12.6, ZB, 88), ZB);
+  for (const k of [0, 1, 3, 4, 5]){ const y = STEPS[k].a[1] + 3.5; sh += castShadow(bx(33, y - 2, 37, y + 2, ZB, STEPS[k].a[2] - 1.6), ZB); }
+  sh += `<g opacity=".45">${castShadow(ring(LIFT, ZB, LIFT.r).concat(ring(LIFT, LIFT.z1, LIFT.r)), ZB)}</g>`;
+  s += clipTo(boardTop(BASE[0], BASE[1], BASE[2], BASE[3], ZB, BASE[5]), sh);
+
+  const items = [];
+  items.push(...stackItems(CORE[0], CORE[1], CORE[2], CORE[3], ZB, CORE_TOP, 0, 12.1));
+  items.push(...stackItems(GATE[0], GATE[1], GATE[2], GATE[3], ZB, GATE[4], 2, 11));
+  items.push(...stackItems(43, 8.6, 47, 12.6, ZB, 88.4, 4, 12.2));                     // post under the green chute
+  // posts under the steps (none under the third: the orange chute from the bowl passes there)
+  [0, 1, 3, 4, 5].forEach(k => { const y = STEPS[k].a[1] + 3.5; items.push(...stackItems(33, y - 2, 37, y + 2, ZB, STEPS[k].a[2] - 1.1, k + 1, 9)); });
+  for (const c of CHUTES) items.push(...chuteItems(c));
+  // spokes from the centre tower out under the helix, four to a turn
+  for (let t = 1/16; t < 1; t += 1/8){ const p = helixAt(t), a = Math.atan2(p[1] - HX.y, p[0] - HX.x);
+    const from = [HX.x + 3.4*Math.cos(a), HX.y + 3.4*Math.sin(a), p[2] - 3], to = [HX.x + (HX.r - 1.5)*Math.cos(a), HX.y + (HX.r - 1.5)*Math.sin(a), p[2] - .6];
+    items.push({ at: lerp3(from, to, .5), svg: rod(from, to, .75, METAL, toneI, .8) }); }
+  // the bowl on three legs and its pipe
+  for (const a of [20, 140, 260]){ const r = a*Math.PI/180, top = [BOWL.x + (BOWL.R - 1.5)*Math.cos(r), BOWL.y + (BOWL.R - 1.5)*Math.sin(r), BOWL.rim - 1.2];
+    items.push({ at: [top[0], top[1], (ZB + top[2])/2 - 8], svg: rod([top[0], top[1], ZB], top, .8, METAL, toneI, .8) }); }
+  items.push({ at: [BOWL.x, BOWL.y, BOWL.neck], svg: bowlSvg(BOWL) });
+  items.push({ at: [PIPE.x, PIPE.y, (PIPE.z0 + PIPE.z1)/2], svg: tubeSvg(PIPE, 'P', false) });
+  items.push({ at: [LIFT.x, LIFT.y, (LIFT.z0 + LIFT.z1)/2], svg: act('lift', tubeSvg(LIFT, 'L', true)) });
+  items.push(...motorItems());
+  items.push({ at: [35, 48, GATE[4] + 3], svg: gateSvg() });
+  for (const b of st.balls) if (b.p && !b.zone) items.push({ at: [b.p[0], b.p[1], b.p[2] + .4], svg: ball(b.p, b.col) });
+  s += byDepth(items);
+  return s + labels();
+}
+
+/* ---------- motion ---------- */
+function place(b){
+  if (b.mode === 'queue'){ b.p = trayBall(b.y); b.zone = null; }
+  else { const q = at(ROUTES[b.rt], b.s); b.p = q.p; b.zone = q.zone; }
+}
+function step(dt){
+  const lifting = st.motor || st.pending > 0 || inLift().length > 0;
+  if (lifting) st.screw = (st.screw + dt * 2*Math.PI * LIFT_V / LIFT.pitch) % (2*Math.PI*100);
+  for (const b of st.balls){
+    if (b.mode !== 'run') continue;
+    b.s += at(ROUTES[b.rt], b.s).v * dt;
+    const rt = ROUTES[b.rt];
+    if (b.s >= rt.len){
+      if (b.rt === 'common'){ b.rt = st.gate; b.s -= rt.len; }                     // the gate decides as the marble arrives
+      else { b.mode = 'queue'; b.y = ENTRY_Y[b.rt]; st.runs++; }
+    }
+  }
+  queue().forEach((b, k) => { const ty = slotY(k); if (b.y > ty) b.y = Math.max(ty, b.y - dt*24); });
+  // the first in line rolls into the foot of the lift once the one before it has climbed clear
+  const q0 = queue()[0];
+  if (q0 && q0.y <= slotY(0) + .05 && (st.motor || st.pending > 0) && !st.balls.some(b => b.mode === 'run' && b.rt === 'common' && b.s < 16)){
+    q0.mode = 'run'; q0.rt = 'common'; q0.s = 0; if (!st.motor) st.pending = Math.max(0, st.pending - 1);
+  }
+  st.balls.forEach(place);
+  const settled = b => b.mode === 'queue' && Math.abs(b.y - slotY(queue().indexOf(b))) < .01;
+  return lifting || !st.balls.every(settled);
+}
+function send(){
+  const waiting = queue().length - st.pending;
+  if (st.motor) return ui.flash('the lift is already running');
+  if (waiting <= 0) return ui.flash('all the marbles are out on the run');
+  st.pending++;
+}
+function setMotor(on){
+  st.motor = on; if (on) st.pending = 0;
+  const b = [...document.querySelectorAll('.act')].find(x => /^Lift motor/.test(x.textContent));
+  if (b) b.textContent = `Lift motor: ${on ? 'on' : 'off'}`;
+}
+
+let ui;
+ui = mountFigure({
+  fig:'14', title:'Marble helix', hint:'a screw lifts the marbles; they spin down the helix and pick a way home',
+  size:[BASE[2], BASE[3], 100], palette:'cobalt', state:st, turnLimit:180,
+  scene,
+  readout: st => `${st.runs} runs`,
+  stats: st => [
+    { label:'Runs', value: String(st.runs) },
+    { label:'On the run', value: String(st.balls.filter(b => b.mode === 'run').length), small:true },
+  ],
+  buttonsLabel:'Marble run',
+  buttons:[
+    { label:'Send a marble', onClick: () => send() },
+    { label:'Gate', choices: st => [['steps', 'Steps'], ['bowl', 'Wobble bowl']].map(([k, label]) => ({ label, current: st.gate === k, onClick: () => { st.gate = k; } })) },
+    { label:'Lift motor: off', onClick: st => setMotor(!st.motor) },
+  ],
+  acts:{ lift: () => send(), gate: st => { st.gate = st.gate === 'bowl' ? 'steps' : 'bowl'; } },
+  params:(st, q) => {
+    if (q.get('gate') === 'bowl') st.gate = 'bowl';
+    // ?run=0.4 puts one marble that far along its route (screenshots): ?run=0.5&rt=steps
+    if (q.has('run')){ const b = st.balls[5], rt = q.get('rt') || 'common'; b.mode = 'run'; b.rt = rt; b.s = +q.get('run') * ROUTES[rt].len; }
+  },
+});
+st.balls.forEach(place);
+if (new URLSearchParams(location.search).get('motor') === '1') setMotor(true);
+ui.loop(step);
+seeThrough(ui, () => '', { labelsOnly: true });
+</script>
+</body>
+</html>

@@ -9,7 +9,7 @@ Open `index.html`: it lists every piece, split into **Games** and **Demonstratio
 |---|---|
 | `index.html` | The hub page, with a live preview card for every piece |
 | `games/` | Pieces with a goal you can fail: Lift Operator, Terminal station, Fishing, Marble Run Adventure |
-| `demos/` | How-it-works figures: Elevator, Escalator, Escalator pair, Train station, Candle, Vending machines, Sandwich kiosk, Marble tower, Traffic light, Washing machine |
+| `demos/` | How-it-works figures: Elevator, Escalator, Escalator pair, Train station, Candle, Vending machines, Sandwich kiosk, Marble tower, Marble helix, Traffic light, Washing machine |
 | `src/` | Editable sources for the figures. They load the shared drawing engine from `src/core.js` |
 | `assets/nav.js` | Adds the "← Gallery" link to each page, plus the `#thumb` preview mode the hub uses |
 
@@ -21,7 +21,9 @@ Lift Operator, Marble Run, Traffic light and Washing machine have no separate so
 
 Every demo can be turned: drag the figure (or use the arrow keys), and use **Front view** / **Turntable** under it.
 Double-click returns to the front. Figures built on `src/core.js` turn up to 40° either side of the front, so the
-faces they were drawn for always stay toward you; Traffic light and Washing machine turn all the way round.
+faces they were drawn for always stay toward you. A figure that draws every side passes `turnLimit:180` to
+`mountFigure` and turns all the way round: the escalators, Marble tower and Marble helix do, and so do Traffic light
+and Washing machine.
 Games keep a still view (`turn:false` in `mountFigure`).
 
 ## Battery use
