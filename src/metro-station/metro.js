@@ -25,7 +25,7 @@ const roundel = (p,r,ring,word) => out.push(`<circle cx="${n1(p[0])}" cy="${n1(p
 /* the slab every level stands on: a cut edge you can read the level's name on */
 function slab(z,top,side,name){
   pY(0,DP,z-TH,WD,TH,shadeOf(side),1); pX(WD,0,z-TH,DP,TH,side,1); pT(0,0,z,WD,DP,top,1.1);
-  ytext(14,DP,z-15,name,{size:11,cls:'cap',col:'#4a4552',track:1.4});
+  ytext(14,DP,z-15,name,{size:13,cls:'cap',col:'#4a4552',track:1.4});
 }
 
 /* an escalator: landings at both ends, the incline, glass balustrades and black handrails.
@@ -78,7 +78,7 @@ function glassFront(x,y,z,w,d,h,word){
 
 /* ---------- the platform ---------- */
 function platformLevel(){ const z = ZP;
-  slab(z,'#ddd6c8','#cfc4ae','PLATFORM · LEVEL −2');
+  slab(z,'#ddd6c8','#cfc4ae','3 · PLATFORM');
   /* the trackbed: a trench, its back wall, ballast, sleepers and two rails */
   pT(0,0,z-12,WD,56,'#8a837b',.8); pY(0,0,z-12,WD,12,'#a69d90',.7);
   { const l = []; for (let i = 0; i < 90; i++){ const x = rnd()*WD, y = 2+rnd()*52; l.push([P(x,y,z-12),P(x+2,y,z-12)]); } rule(l,'#6f6861',1.2,.6); }
@@ -121,7 +121,7 @@ function platformKit(){
 
 /* ---------- the ticket hall ---------- */
 function hallLevel(){ const z = ZC;
-  slab(z,'#ebe3d1','#d2c7b1','TICKET HALL · LEVEL −1');
+  slab(z,'#ebe3d1','#d2c7b1','2 · TICKET HALL');
   group('data-state="concourse"',() => { pT(196,0,z,WD-196,DP,'#ebe3d1',0); grid(196,WD,0,DP,z,40,'#d3c8b4'); });
   group('data-state="paid"',() => { pT(0,0,z,196,DP,'#e1e3d6',0); grid(0,196,0,DP,z,40,'#c9cbbb'); });
   rim([P(0,0,z),P(WD,0,z),P(WD,DP,z),P(0,DP,z)],1.1,INK);
@@ -159,7 +159,7 @@ function hallKit(){ const z = ZC;
 /* ---------- the street ---------- */
 function streetLevel(){ const z = ZS;
   group('data-state="street"',() => {
-    slab(z,'#ddd3c0','#cdc1ab','STREET · LEVEL 0');
+    slab(z,'#ddd3c0','#cdc1ab','1 · STREET');
     pT(0,0,z,64,DP,'#8c96a3',.9); for (let y = 6; y < DP; y += 30) pT(31,y,z,2,15,'#eee6d4',0);
     pT(4,0,z,2,DP,'#eee6d4',0);
     pT(64,0,z,6,DP,'#ece4d3',.6);
@@ -214,7 +214,7 @@ function streetKit(){ const z = ZS;
 }
 
 /* the people: one pool, drawn once, moved by transform; a red ring marks the traveller you send */
-const LOOKS = (() => { const hair = ['short','bun','bob','long','wavy','cap','hat','short','bob','long'], shirt = [PAL.sky,PAL.pink,PAL.sage,PAL.gold,'#e08b60','#b9a6d6','#7fb6c9','#e6c07a','#9fc78f','#d98f9f','#8fa8d9'], says = ['off to work','is this my line?','mind the gap','two stops for me','running late!','tap in, tap out','lovely day','where is the lift?','just visiting','meeting a friend','home time','I love trains'];
+const LOOKS = (() => { const hair = ['short','bun','bob','long','wavy','cap','hat','short','bob','long'], shirt = [PAL.sky,PAL.pink,PAL.sage,PAL.gold,'#e08b60','#b9a6d6','#7fb6c9','#e6c07a','#9fc78f','#d98f9f','#8fa8d9'], says = ['hello!','choo choo!','I love trains','going to the zoo','wheee, moving stairs!','beep beep!','hi there!','I see the train!','going to see Grandma','home time','yay, the bus!','wave hello!'];
   return Array.from({length:24},(_,i) => ({size:.42,hair:hair[i%hair.length],shirt:shirt[(i*5)%shirt.length],arm:i%7 === 3 ? 'hold' : 'down',look:1,kid:i%9 === 4,say:says[i%says.length]})); })();
 function pool(){
   out.push('<g id="m-pool" style="display:none">');
@@ -226,8 +226,8 @@ function pool(){
 
 function draw(seed){
   begin(seed); OX = 640; OY = 985;
-  title('an exploded view · statechart','Metro station');
-  out.push(`<text x="72" y="236" class="it" font-size="19" fill="${LEAD}">Three levels pulled apart. Follow anyone from the bus stop down to the train.</text>`);
+  title('a trip under the street','Metro station');
+  out.push(`<text x="72" y="236" class="it" font-size="19" fill="${LEAD}">Down, down, down: from the bus to the train!</text>`);
   /* bottom up, so each slab covers what passes under it */
   out.push('<g id="lv-p">'); platformLevel(); train(); platformKit();
   for (const [x,y] of [[52,110],[96,110],[52,136],[96,136],[50,160],[96,160],[50,194],[96,194]]) dash(P(x,y,ZC-TH),P(x,y,ZP+100));
@@ -236,43 +236,19 @@ function draw(seed){
   for (const [x,y] of [[298,56],[342,56],[298,80],[342,80],[354,4],[394,4],[354,44],[394,44]]) dash(P(x,y,ZS-TH),P(x,y,ZC+100));
   out.push('<g id="mv-c"></g></g>');
   out.push('<g id="lv-s">'); streetLevel(); streetKit(); out.push('<g id="mv-s"></g></g>');
-  /* margin notes: street */
+  /* margin notes, few and short, so a small child can follow them: one per level and the big things */
   const stag = (st,fn) => group(`class="stag" data-for="${st}"`,fn);
-  stag('street',() => label(40,262,'street level','ground, where buses stop',[40,DP,ZS-12]));
-  label(40,322,'road','the bus lane by the kerb',[22,190,ZS]);
-  label(40,382,'bus stop sign','the flag: route 42',[72,40,ZS+70]);
-  label(40,442,'bus shelter','glass, open to the kerb',[104,110,ZS+56]);
-  label(40,502,'bench','inside the shelter',[96,112,ZS+16]);
-  label(40,562,'timetable','every 8 min, illustrative',[92,150,ZS+34]);
-  label(1360,262,'station sign','the metro roundel',[282,40,ZS+104],'end');
-  label(1360,322,'station entrance','escalators down',[320,63,ZS+66],'end');
-  label(1360,382,'lift','step-free, street to hall',[394,24,ZS+70],'end');
-  label(1360,442,'pavement','paving slabs',[250,170,ZS],'end');
-  /* the hall */
-  stag('concourse',() => label(40,640,'ticket hall','one level down',[30,DP,ZC-12]));
-  label(40,700,'vending machine','drinks and snacks',[135,18,ZC+44]);
-  label(40,760,'escalator well','down to the platform',[60,123,ZC]);
-  label(40,820,'stairwell','stairs to the platform',[58,177,ZC]);
-  stag('paid',() => label(40,880,'paid side','past the gates',[150,215,ZC]));
-  label(1360,560,'lift shaft','glass, one car',[394,24,ZC+60],'end');
-  label(1360,620,'ticket machines','buy or top up a card',[258,221,ZC+44],'end');
-  label(1360,680,'escalators','one down, one up',[340,150,ZC+40],'end');
-  label(1360,740,'service counter','help and tickets',[236,18,ZC+50],'end');
-  label(1360,800,'fare gates','paddles fold back',[230,92,ZC+24],'end');
-  label(1360,860,'card reader','the yellow pad: tap',[226,141,ZC+34],'end');
-  /* the platform */
-  stag('platform',() => label(40,960,'platform','two levels down',[30,DP,ZP-12]));
-  label(40,1020,'escalator','down from the hall',[140,134,ZP+56]);
-  label(40,1080,'staircase','up and down',[130,192,ZP+48]);
-  label(40,1140,'platform edge','mind the gap',[20,57,ZP]);
-  label(40,1200,'yellow line','tactile strip: wait behind',[16,68,ZP]);
-  label(40,1260,'track','rails, sleepers, ballast',[24,28,ZP-8]);
-  stag('aboard',() => label(1360,940,'train','two cars, line 2',[372,30,ZP+40],'end'));
-  label(1360,1000,'train doors','slide open at the stop',[330,48,ZP+26],'end');
-  label(1360,1060,'next-train sign','counts the train in',[388,140,ZP+74],'end');
-  label(1360,1120,'platform bench','for the wait',[356,204,ZP+12],'end');
-  out.push(`<text x="72" y="1348" class="it" font-size="14.5" fill="${LEAD}">Illustrative: the depths, the 8-minute timetable and the 42 bus are made up, and the gap between levels is stretched.</text>`);
-  out.push(`<text x="72" y="1370" class="it" font-size="14.5" fill="${LEAD}">Tap anyone to hear them. Tap a label to find its part.</text>`);
+  stag('street',() => label(40,270,'1 · street','hop off the bus',[40,DP,ZS-12]));
+  label(40,420,'bus stop','wait here',[92,110,ZS+40]);
+  label(1360,270,'way in','go down here',[320,63,ZS+66],'end');
+  label(1360,420,'lift','up and down',[394,24,ZS+70],'end');
+  stag('concourse',() => label(40,640,'2 · ticket hall','tap your card',[30,DP,ZC-12]));
+  label(40,790,'moving stairs','ride down',[60,123,ZC]);
+  label(1360,700,'gates','beep! they open',[230,92,ZC+24],'end');
+  stag('platform',() => label(40,960,'3 · platform','wait for the train',[30,DP,ZP-12]));
+  label(40,1110,'yellow line','stay behind it!',[16,68,ZP]);
+  stag('aboard',() => label(1360,980,'train','all aboard!',[372,30,ZP+40],'end'));
+  out.push(`<text x="72" y="1360" class="it" font-size="16" fill="${LEAD}">Made up for fun. Tap a person to say hello.</text>`);
   plus(1180,120); plus(1230,170,5); plus(1290,1340,5);
   pool();
   finish();
@@ -294,7 +270,7 @@ function init(ctx){
   const fn = f => ({fn:f}), until = f => ({until:f}), wait = s => ({wait:s});
   const ghost = on => fn(a => { a.ghost = on; });
   const vanish = after => [fn(a => { a.opT = 0; }),until(a => a.op < .03),fn(a => { if (after) after(a); drop(a); })];
-  const note = (text,st) => fn(a => { if (a !== featured) return; ctx.say(text); light(st); });
+  const note = (text,st) => fn(a => { if (a !== featured) return; ctx.say(text); light(st); follow(st); });
 
   function mk(x,y,z){ const el = free.pop(); if (!el) return null; const a = {el,x,y,z,q:[],op:0,opT:1,ghost:false,face:1,k:'',tr:'',o:'',walk:0}; A.push(a); el._a = a; place(a); return a; }
   function drop(a){ a.dead = true; A.splice(A.indexOf(a),1); a.el.querySelector('.mring').style.display = 'none'; home.append(a.el); free.push(a.el); if (a === featured) clearFeatured(); }
@@ -330,16 +306,16 @@ function init(ctx){
 
   /* a traveller from wherever they are on the street, all the way onto a train */
   function toTrain(a){ const lift_ = Math.random() < .3, card = Math.random() < .7, steps = [];
-    if (lift_){ if (a.x < 300) steps.push(go(286,98,ZS)); steps.push(go(360,96,ZS),...liftRide(ZS,ZC),note('Down in the lift to the ticket hall.','concourse'),go(346,30,ZC),go(292,30,ZC),go(292,60,ZC)); }
-    else steps.push(...toMouth(a),go(309,58,ZS),ghost(true),go(309,58,ZC+100,GLIDE),ghost(false),go(309,70,ZC+100,ESC),go(309,200,ZC,ESC),note('Down the escalator into the ticket hall.','concourse'),go(309,214,ZC),go(292,222,ZC));
-    if (!card){ const y = pick([207,221]); steps.push(go(292,y,ZC),go(267,y,ZC),note('No card: buying a ticket at the machine.','concourse'),wait(1.8)); }
-    steps.push(...gate(true),note('Ticket tapped: the paddles fold back, through the gates.','paid'));
+    if (lift_){ if (a.x < 300) steps.push(go(286,98,ZS)); steps.push(go(360,96,ZS),...liftRide(ZS,ZC),note('Down in the lift!','concourse'),go(346,30,ZC),go(292,30,ZC),go(292,60,ZC)); }
+    else steps.push(...toMouth(a),go(309,58,ZS),ghost(true),go(309,58,ZC+100,GLIDE),ghost(false),go(309,70,ZC+100,ESC),go(309,200,ZC,ESC),note('Down the moving stairs!','concourse'),go(309,214,ZC),go(292,222,ZC));
+    if (!card){ const y = pick([207,221]); steps.push(go(292,y,ZC),go(267,y,ZC),note('Buying a ticket.','concourse'),wait(1.8)); }
+    steps.push(...gate(true),note('Beep! The gates open.','paid'));
     if (Math.random() < .15) steps.push(go(135,28,ZC),wait(1.4));
     if (Math.random() < .62) steps.push(go(104,123,ZC),go(66,123,ZC),ghost(true),go(66,123,ZP+100,GLIDE),ghost(false),go(72,123,ZP+100,ESC),go(200,123,ZP,ESC),go(214,123,ZP),go(228,108,ZP));
     else steps.push(go(104,170,ZC),go(63,170,ZC),ghost(true),go(63,170,ZP+100,GLIDE),ghost(false),go(70,170,ZP+100,STAIR),go(190,170,ZP,STAIR),go(204,170,ZP),go(228,150,ZP),go(228,108,ZP));
-    const [sx,sy] = spot(); steps.push(go(sx,sy,ZP),note('On the platform, behind the yellow line. Press Train arrives.','platform'),...board());
+    const [sx,sy] = spot(); steps.push(go(sx,sy,ZP),note('Waiting for the train. Press Train comes!','platform'),...board());
     a.q.push(...steps); }
-  const board = () => [until(() => train.st === 'open'),fn(a => { a.boarding = true; const d = nearDoor(a.x)+R(-4,4); a.q.unshift(go(d,74,ZP),go(d,54,ZP,WALK*.7),note('Aboard. The doors close and the train pulls out.','aboard'),...vanish(a => { a.boarding = false; train.carried++; })); })];
+  const board = () => [until(() => train.st === 'open'),fn(a => { a.boarding = true; const d = nearDoor(a.x)+R(-4,4); a.q.unshift(go(d,74,ZP),go(d,54,ZP,WALK*.7),note('All aboard! Bye bye!','aboard'),...vanish(a => { a.boarding = false; train.carried++; })); })];
   const toBus = () => { const y = R(80,140); return [go(R(83,90),y,ZS),until(() => bus.st === 'stopped'),fn(a => { a.boarding = true; a.q.unshift(go(74,58,ZS),go(64,50,ZS,WALK*.7),...vanish(a => { a.boarding = false; })); })]; };
   /* off a train: up the stairs, out through the gates, up to the street, then away or to the bus */
   function outOfStation(a){ const steps = [go(a.x,74,ZP),go(228,108,ZP),go(228,184,ZP),go(204,184,ZP),go(190,184,ZP),go(70,184,ZP+100,STAIR),go(63,184,ZP+100),ghost(true),go(63,184,ZC,GLIDE),ghost(false),go(104,184,ZC),...gate(false)];
@@ -362,21 +338,21 @@ function init(ctx){
   const sign = t => { signB.textContent = t; };
 
   function tickTrain(dt){ const T = train;
-    if (T.st === 'arriving'){ T.t += dt; const k = Math.min(1,T.t/4.2); T.off = -480*(1-easeOut(k)); if (k >= 1){ T.st = 'open'; T.t = 0; T.left = Math.floor(R(1,4.99)); sign('doors open'); if (!featured) ctx.say('Doors open: people step off first, then the platform gets on.'); } }
+    if (T.st === 'arriving'){ T.t += dt; const k = Math.min(1,T.t/4.2); T.off = -480*(1-easeOut(k)); if (k >= 1){ T.st = 'open'; T.t = 0; T.left = Math.floor(R(1,4.99)); sign('doors open'); if (!featured) ctx.say('The doors open. Off first, then on!'); } }
     else if (T.st === 'open'){ T.t += dt; T.doors = Math.min(1,T.doors+dt*2);
       if (T.doors >= 1 && T.left > 0 && T.t > .5+(3-T.left)*.45){ T.left--; const d = pick(DOORS)+R(-4,4), a = mk(d,52,ZP); if (a) outOfStation(a); }
       const boarding = A.some(a => a.boarding && a.z < 1);
-      if (T.t > 4.2 && T.left <= 0 && !boarding){ T.st = 'closing'; sign('stand clear'); if (!featured) ctx.say('Doors closing. Stand clear.'); } }
-    else if (T.st === 'closing'){ T.doors = Math.max(0,T.doors-dt*1.6); if (T.doors <= 0){ T.st = 'leaving'; T.t = 0; if (!featured) ctx.say(`The train pulls out${T.carried ? ` with ${T.carried} new passenger${T.carried > 1 ? 's' : ''}` : ''}.`); } }
+      if (T.t > 4.2 && T.left <= 0 && !boarding){ T.st = 'closing'; sign('stand clear'); if (!featured) ctx.say('The doors close.'); } }
+    else if (T.st === 'closing'){ T.doors = Math.max(0,T.doors-dt*1.6); if (T.doors <= 0){ T.st = 'leaving'; T.t = 0; if (!featured) ctx.say(`Choo choo! The train goes${T.carried ? `, with ${T.carried} new friend${T.carried > 1 ? 's' : ''}` : ''}.`); } }
     else if (T.st === 'leaving'){ T.t += dt; const k = Math.min(1,T.t/4); T.off = 480*easeIn(k); if (k >= 1){ T.st = 'away'; T.off = -480; sign('8 min'); } }
     else return false;
     putTrain(); putDoors(); return true; }
   function tickBus(dt){ const B = bus;
-    if (B.st === 'arriving'){ B.t += dt; const k = Math.min(1,B.t/3.6); B.off = 320*(1-easeOut(k)); if (k >= 1){ B.st = 'stopped'; B.t = 0; B.left = Math.floor(R(0,3.99)); ctx.say('The 42 stops: doors open, people step off and the queue gets on.'); } }
+    if (B.st === 'arriving'){ B.t += dt; const k = Math.min(1,B.t/3.6); B.off = 320*(1-easeOut(k)); if (k >= 1){ B.st = 'stopped'; B.t = 0; B.left = Math.floor(R(0,3.99)); ctx.say('The bus stops. Off and on!'); } }
     else if (B.st === 'stopped'){ B.t += dt;
       if (B.left > 0 && B.t > .5+(3-B.left)*.6){ B.left--; const a = mk(66,52,ZS); if (a){ a.q.push(go(78,60,ZS)); if (Math.random() < .6) toTrain(a); else { const e = edgeS(); a.q.push(go(...(e[1] < 20 || e[0] < 286 ? e : [R(120,280),224]),ZS),...vanish()); } } }
       const boarding = A.some(a => a.boarding && a.z > ZS-1);
-      if (B.t > 2.6 && B.left <= 0 && !boarding){ B.st = 'leaving'; B.t = 0; ctx.say('The bus pulls away.'); } }
+      if (B.t > 2.6 && B.left <= 0 && !boarding){ B.st = 'leaving'; B.t = 0; ctx.say('Bye bye, bus!'); } }
     else if (B.st === 'leaving'){ B.t += dt; const k = Math.min(1,B.t/3.4); B.off = -330*easeIn(k); if (k >= 1){ B.st = 'away'; B.off = 320; } }
     else return false;
     putBus(); return true; }
@@ -390,25 +366,39 @@ function init(ctx){
 
   /* the lit state: the label of the level the red-ringed traveller is on */
   const stags = [...document.querySelectorAll('.stag')];
-  function light(st){ stags.forEach(g => g.classList.toggle('lit-on',g.dataset.for === st)); }
+  function light(st){ if (st === 'paid') st = 'concourse'; stags.forEach(g => g.classList.toggle('lit-on',g.dataset.for === st)); }
   function clearFeatured(){ if (featured) featured.el.querySelector('.mring').style.display = 'none'; featured = null; }
 
   const poke = () => { lastPoke = performance.now(); if (!spawnT) spawnLoop(); wake(); };
   function spawnLoop(){ spawnT = setTimeout(() => { spawnT = 0; if (performance.now()-lastPoke > 90000) return; if (A.length < 18) spawnStreet(); spawnLoop(); wake(); },R(2600,5600)); }
   $('sheet').addEventListener('pointerdown',poke);
 
-  ctx.button('bus arrives',() => { poke();
-    if (bus.st !== 'away') return ctx.say(bus.st === 'leaving' ? 'Not yet: the last bus is still pulling away.' : 'Not yet: a bus is already at the stop.');
-    bus.st = 'arriving'; bus.t = 0; bus.off = 320; putBus(); ctx.say('The 42 bus pulls in to the stop.'); });
-  ctx.button('train arrives',() => { poke();
-    if (train.st !== 'away') return ctx.say(train.st === 'leaving' ? 'Not yet: the last train is still pulling out.' : 'Not yet: a train is already at the platform.');
-    train.st = 'arriving'; train.t = 0; train.off = -480; train.carried = 0; train.doors = 0; sign('arriving'); putTrain(); putDoors(); ctx.say('A train pulls in to the platform. Nobody steps past the yellow line.'); });
-  ctx.button('send a traveller',() => { poke();
-    if (featured) return ctx.say('Not yet: your traveller (red ring) is still on the way.');
-    const a = spawnStreet('train'); if (!a) return ctx.say('The station is full just now: wait a moment.');
-    featured = a; a.el.querySelector('.mring').style.display = ''; light('street'); ctx.say('A traveller (red ring) arrives on the street, heading for the train.'); });
-  ctx.hint('people also arrive on their own; tap anyone');
-  ctx.say('Press Bus arrives or Train arrives, or send a traveller and follow the red ring.');
+  ctx.button('bus comes',() => { poke();
+    if (bus.st !== 'away') return ctx.say(bus.st === 'leaving' ? 'Wait: the bus is still going.' : 'Wait: the bus is here already!');
+    bus.st = 'arriving'; bus.t = 0; bus.off = 320; putBus(); ctx.say('Here comes the bus!'); });
+  ctx.button('train comes',() => { poke();
+    if (train.st !== 'away') return ctx.say(train.st === 'leaving' ? 'Wait: the train is still going.' : 'Wait: the train is here already!');
+    train.st = 'arriving'; train.t = 0; train.off = -480; train.carried = 0; train.doors = 0; sign('arriving'); putTrain(); putDoors(); ctx.say('Here comes the train! Stay behind the yellow line.'); });
+  ctx.button('send a friend',() => { poke();
+    if (featured) return ctx.say('Wait: your friend (red ring) is still going.');
+    const a = spawnStreet('train'); if (!a) return ctx.say('Too busy! Wait a little.');
+    featured = a; a.el.querySelector('.mring').style.display = ''; light('street'); ctx.say('Your friend has a red ring. Follow them to the train!'); });
+  /* look closer: one button per level zooms the camera onto it; tapping a level's label does the same */
+  const LEVELS = [['street','1 street',ZS,'the street'],['concourse','2 ticket hall',ZC,'the ticket hall'],['platform','3 platform',ZP,'the platform']];
+  const looks = document.createElement('div'); looks.id = 'looks'; $('actions').after(looks);
+  let zoomed = -1;
+  function zoomTo(i,quiet){ zoomed = i; looks.querySelectorAll('button').forEach((b,k) => b.setAttribute('aria-pressed',k === i || (i < 0 && k === 3))); wake();
+    if (i < 0){ ctx.focus(700,700,1,.01); if (!quiet) ctx.say('The whole station.'); return; }
+    const z = LEVELS[i][2], l = P(0,DP,z-TH), r = P(WD,0,z), t = P(0,0,z+(z === ZS ? 120 : 100)), b = P(WD,DP,z-TH);
+    ctx.focus((l[0]+r[0])/2,(t[1]+b[1])/2,Math.min(2.4,1400/((r[0]-l[0])*.8),1400/(b[1]-t[1]+60)));
+    if (!quiet) ctx.say(`Looking at ${LEVELS[i][3]}.`); }
+  /* while zoomed on a level, the camera follows your friend down to the next one */
+  function follow(st){ if (zoomed < 0) return; const i = {street:0,concourse:1,paid:1,platform:2,aboard:2}[st]; if (i !== zoomed) zoomTo(i,true); }
+  LEVELS.forEach(([,name],i) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = name; b.onclick = () => { poke(); zoomTo(i); }; looks.append(b); });
+  { const b = document.createElement('button'); b.type = 'button'; b.textContent = 'see it all'; b.onclick = () => zoomTo(-1); looks.append(b); }
+  zoomTo(-1,true);
+  ctx.hint('tap a person to say hello');
+  ctx.say('Press a button! Send a friend to the train.');
 
   /* a station already going about its day */
   putTrain(); putBus(); putCar(); sign('8 min');
@@ -428,5 +418,6 @@ function init(ctx){
     /* nearer people cover farther ones: re-stack each level's people a few times a second */
     if (frameN%6 === 0) for (const g of Object.values(G)){ const kids = [...g.children], key = el => el === car ? 400 : el._a ? el._a.x+el._a.y : 0, sorted = [...kids].sort((p,q) => key(p)-key(q)); if (sorted.some((el,i) => el !== kids[i])) sorted.forEach(el => g.append(el)); }
     return busy; },
-    stop(){ clearTimeout(spawnT); $('sheet').removeEventListener('pointerdown',poke); } };
+    click(e){ const g = e.target.closest('.stag'); if (g){ const i = {street:0,concourse:1,platform:2,aboard:2}[g.dataset.for]; zoomTo(i === zoomed ? -1 : i); } return false; },
+    stop(){ looks.remove(); clearTimeout(spawnT); $('sheet').removeEventListener('pointerdown',poke); } };
 }

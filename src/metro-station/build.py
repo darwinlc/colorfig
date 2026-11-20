@@ -35,7 +35,9 @@ function frame(t){ driving = false; gen++; if (document.hidden) return;
   if (t-drawn < 31){ drive(); return; }
   const dt = Math.max(0,Math.min(.05,(t-last)/1000)); last = t; drawn = t; nowT = t/1000;
   const busy = current?.tick?.(t/1000,dt); camera(dt);
-  if (busy !== false || aim || camZ > 1.002) drive(); }
+  /* the camera counts as busy only while it is still easing, so a zoomed-in view goes quiet too */
+  const easing = aim ? Math.abs(camZ-aim.z)+(Math.abs(camX-aim.x)+Math.abs(camY-aim.y))/700 > .002 : camZ > 1.002;
+  if (busy !== false || easing) drive(); }
 /* a frame, or a timer when frames don't come (a pane or iframe the browser has stopped painting); whichever is first */
 function drive(){ if (driving) return; driving = true; const g = gen; requestAnimationFrame(t => { if (g === gen) frame(t); }); setTimeout(() => { if (g === gen) frame(performance.now()); },100); }
 window.wake = () => { if (!driving){ last = performance.now(); drive(); } };
@@ -44,6 +46,19 @@ addEventListener('pointerdown',window.wake); addEventListener('keydown',window.w
 page = page.rstrip()
 swap("open(first,true);\nrequestAnimationFrame(frame);", "open(first,true);\nwindow.wake();")
 swap("</style>", """.stag.lit-on text{fill:#b23a38}.stag.lit-on path{stroke:#b23a38}
+/* kid-sized buttons, and a "look closer" row of level zooms under the event buttons */
+#actions button,#looks button{font-size:17px;padding:12px 18px}
+#looks{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+#looks::before{content:"Look closer";width:100%;font:500 12px/1 var(--mono);letter-spacing:.8px;color:var(--ink);opacity:.72;text-transform:uppercase;font-size-adjust:.5}
+#looks button{font-family:var(--mono);color:var(--ink);background:var(--paper);border:1px solid var(--ink);border-radius:999px;cursor:pointer;white-space:pre}
+#looks button[aria-pressed=true]{background:var(--ink);color:var(--paper)}
+#looks button:hover{transform:translateY(-1px)}
+/* the buttons sit on the left: beside the sheet on a wide screen, at the start of the row under it otherwise */
+#panel{justify-content:flex-start}
+@media (min-aspect-ratio:11/10) and (min-width:1180px){
+body #panel{left:auto;right:calc(100% + 18px);width:210px}
+#actions,#looks{flex-direction:column;align-items:stretch}#actions::before,#looks::before{order:-1}
+#actions button,#looks button{text-align:left;width:100%}}
 html.thumb #panel,html.thumb #credit,html.thumb #tabs,html.thumb #lgChip{display:none!important}
 html.thumb body{padding:0!important;gap:0}html.thumb #holder,html.thumb body #holder{width:min(100vw,100vh)!important}
 </style>""")
