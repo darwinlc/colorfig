@@ -1,0 +1,25 @@
+---
+title: "Our day at the Flower Dome"
+---
+stateDiagram-v2
+  [*] --> wake
+  wake: Garden day!
+  train: Whoosh, the train
+  dome: The giant bubble
+  flowers: A sea of flowers
+  fountain: The splashy fountain
+  tree: The bottle tree
+  photo: Say cheese!
+  snack: A rest and a snack
+  home: Home, sleepy home
+  wake --> train: off we go
+  train --> dome: our stop
+  dome --> flowers: walk in
+  flowers --> fountain: follow the path
+  fountain --> tree: look up
+  tree --> photo: time for a photo
+  photo --> photo: achoo! [no sneeze yet]
+  photo --> photo: cheese again [sneezed]
+  photo --> snack: click! [nobody sneezed]
+  snack --> home: train home
+  home --> [*]

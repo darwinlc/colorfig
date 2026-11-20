@@ -1,0 +1,21 @@
+{
+ "title": "Our day at the Flower Dome",
+ "checked": "Every reachable state checked (10 states, 10 steps). All 3 rules hold.",
+ "rules": [
+  {
+   "rule": "Every step can happen, and none is a dead end",
+   "says": "Each of the 9 states is reached from the start, and every path can still reach its end (home).",
+   "path": "Holds: all 9 reached, none stuck."
+  },
+  {
+   "rule": "The photo we keep has no sneeze in it",
+   "says": "After the photo (snack and home) nobody is mid-sneeze: a sneezy photo is always taken again.",
+   "path": "Take away the nobody sneezed guard and it breaks in 8 steps: off we go, our stop, walk in, follow the path, look up, time for a photo, achoo! [no sneeze yet], click mid-sneeze."
+  },
+  {
+   "rule": "We go home with a photo",
+   "says": "We only reach the snack and the train home once the photo is taken.",
+   "path": "Take away the photo first guard and it breaks in 6 steps: off we go, our stop, walk in, follow the path, look up, skip the photo."
+  }
+ ]
+}
