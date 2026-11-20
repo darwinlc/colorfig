@@ -1,0 +1,21 @@
+{
+ "title": "The Bear Hunt",
+ "checked": "Every reachable state checked (10 states, 10 steps). All 3 rules hold.",
+ "rules": [
+  {
+   "rule": "Every step can happen, and none is a dead end",
+   "says": "Each of the 9 states is reached from the start, and every path can still reach its end (surprise).",
+   "path": "Holds: all 9 reached, none stuck."
+  },
+  {
+   "rule": "We meet the bear on tiptoe",
+   "says": "From the bear on (bear, blanket, picnic) we are never mid-stomp: a stomp in the cave is always followed by a quiet try.",
+   "path": "Take away the quiet guard and it breaks in 7 steps: march, through it, across it, over it, hold hands, stomp! [quiet], barge in stomping."
+  },
+  {
+   "rule": "Nobody runs home before seeing the bear",
+   "says": "We only reach the blanket and the picnic once we have peeked at the bear.",
+   "path": "Take away the bear first guard and it breaks in 5 steps: march, through it, across it, over it, run home early."
+  }
+ ]
+}

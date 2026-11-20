@@ -1,0 +1,25 @@
+---
+title: "The Bear Hunt"
+---
+stateDiagram-v2
+  [*] --> start
+  start: Off we go
+  leaves: Crunch munch
+  brook: Hop plop
+  hill: Clamber clatter
+  fog: Tip-toe hush
+  cave: A dark cave
+  bear: A bear!
+  blanket: Under the blanket
+  surprise: A surprise
+  start --> leaves: march
+  leaves --> brook: through it
+  brook --> hill: across it
+  hill --> fog: over it
+  fog --> cave: hold hands
+  cave --> cave: stomp! [quiet]
+  cave --> cave: shh, try again [noisy]
+  cave --> bear: peek [quiet]
+  bear --> blanket: run home!
+  blanket --> surprise: knock knock
+  surprise --> [*]
